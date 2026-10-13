@@ -11,8 +11,13 @@ instruction.md
 changes.md
 # Virtual environments
 .venv
+<<<<<<< HEAD
 logs/*
 *.sh
+=======
+logs/
+
+>>>>>>> ba122f926f2411a6cfe704e1394b5bb1689f813b
 #Checkpoints directory
 deploy/robots/go2/config/policy/velocity/*
 

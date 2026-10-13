@@ -12,6 +12,11 @@ INSTALL_REQUIRES = [
     "warp-lang>=1.11.0.dev20251211",
     "mujoco-warp",
     "mujoco>=3.4.0",
+    "mujoco-mjx>=3.4.0",
+    "jax>=0.4.20",
+    "jaxlib>=0.4.20",
+    "flax>=0.8.0",
+    "optax>=0.1.7",
     "trimesh>=4.8.3",
     "viser>=1.0.16",
     "moviepy",
@@ -20,6 +25,10 @@ INSTALL_REQUIRES = [
     "tensorboard>=2.20.0",
     "onnxscript>=0.5.4",
     "wandb>=0.22.3",
+    "etils>=1.7.0",
+    "dm-tree>=0.1.8",
+    "absl-py>=2.0.0",
+    "orbax-checkpoint>=0.1.0",
 ]
 
 # Installation operation

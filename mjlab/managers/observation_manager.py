@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 import numpy as np
-import torch
+import torch,ipdb
 from prettytable import PrettyTable
 
 from mjlab.managers.manager_base import ManagerBase, ManagerTermBaseCfg
@@ -246,6 +246,7 @@ class ObservationManager(ManagerBase):
   def compute(
     self, update_history: bool = False
   ) -> dict[str, torch.Tensor | dict[str, torch.Tensor]]:
+    print("Computing observations with update_history =", update_history)
     # Return cached observations if not updating and cache exists.
     # This prevents double-pushing to delay buffers when compute() is called
     # multiple times per control step (e.g., in get_observations() after step()).
@@ -253,21 +254,34 @@ class ObservationManager(ManagerBase):
       return self._obs_buffer
 
     obs_buffer: dict[str, torch.Tensor | dict[str, torch.Tensor]] = dict()
+    print("The observation buffer is:",obs_buffer)
+    import ipdb; ipdb.set_trace()
     for group_name in self._group_obs_term_names:
+      print(f"Computing group '{group_name}' observations...")
       obs_buffer[group_name] = self.compute_group(group_name, update_history)
     self._obs_buffer = obs_buffer
+    ipdb.set_trace()
     return obs_buffer
 
   def compute_group(
     self, group_name: str, update_history: bool = False
   ) -> torch.Tensor | dict[str, torch.Tensor]:
     group_term_names = self._group_obs_term_names[group_name]
+    #* guessing the individual terms are being computed - YES, the individual terms being specifid are computed based on what config they are attributed to.
+    #* The configs are being accessed here - so the compute function of the term config is being called in order to compute the observation for that term based on the config specified for it. YES, the compute function of the term config is being called in order to compute the observation for that term based on the config specified for it.
     group_obs: dict[str, torch.Tensor] = {}
     obs_terms = zip(
       group_term_names, self._group_obs_term_cfgs[group_name], strict=False
     )
-    for term_name, term_cfg in obs_terms:
-      obs: torch.Tensor = term_cfg.func(self._env, **term_cfg.params).clone()
+    for term_name, term_cfg in obs_terms: #* Wheere we specify what the term is and whether it is a reward/observation or termination etc.
+      print("Computing term:", term_name, "with config:", term_cfg," in group:", group_name,"using function:", term_cfg.func) #TODO REMOVE
+      ipdb.set_trace()
+      if(term_name == "base_lin_vel"):
+        print("Params are :", **term_cfg.params)
+        print("Function is:", term_cfg.func)
+        print("Observation is:",term_cfg.func(self._env, **term_cfg.params).clone())
+      import ipd
+      obs: torch.Tensor = term_cfg.func(self._env, **term_cfg.params).clone() #* So the func is being called here - this is the function that computes the observation based on the config specified for that term. The params are also being passed to it.
       if isinstance(term_cfg.noise, noise_cfg.NoiseCfg):
         obs = term_cfg.noise.apply(obs)
       elif isinstance(term_cfg.noise, noise_cfg.NoiseModelCfg):
@@ -293,10 +307,18 @@ class ObservationManager(ManagerBase):
           group_obs[term_name] = circular_buffer.buffer
       else:
         group_obs[term_name] = obs
+    print("Type", type(group_obs))
+    print("The group obs before concatenation is:",group_obs)
+    print("Length of group obs:",len(group_obs))
     if self._group_obs_concatenate[group_name]:
-      return torch.cat(
+      print("Concatenating group observations for group:", group_name)
+      group_obs_cat = torch.cat(
         list(group_obs.values()), dim=self._group_obs_concatenate_dim[group_name]
       )
+      print("The group obs is:",group_obs_cat) #TODO REMOVE
+      ipdb.set_trace()
+      return group_obs_cat
+    
     return group_obs
 
   def _prepare_terms(self) -> None:

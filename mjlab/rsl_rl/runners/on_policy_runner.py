@@ -18,17 +18,22 @@ from mjlab.rsl_rl.env import VecEnv
 from mjlab.rsl_rl.modules import ActorCritic, ActorCriticRecurrent, resolve_rnd_config, resolve_symmetry_config, ActorCritic_wild
 from mjlab.rsl_rl.utils import resolve_obs_groups, store_code_state
 from mjlab.rsl_rl.utils.exporter import export_policy_as_jit, export_policy_as_onnx
-
-
+from dataclasses import asdict
 class OnPolicyRunner:
     """On-policy runner for training and evaluation of actor-critic methods."""
 
     def __init__(self, env: VecEnv, train_cfg: dict, log_dir: str | None = None, device="cpu"):
+        
+        if not isinstance(train_cfg, dict):
+            train_cfg = asdict(train_cfg)
+            
         self.cfg = train_cfg
         self.alg_cfg = train_cfg["algorithm"]
         self.policy_cfg = train_cfg["policy"]
         self.device = device
         self.env = env
+        
+        
 
         # check if multi-gpu is enabled
         self._configure_multi_gpu()
@@ -38,11 +43,11 @@ class OnPolicyRunner:
         self.save_interval = self.cfg["save_interval"]
 
         # query observations from environment for algorithm construction
-        obs = self.env.get_observations()
+        obs, _ = self.env.reset()
         default_sets = ["critic"]
         if "rnd_cfg" in self.alg_cfg and self.alg_cfg["rnd_cfg"] is not None:
             default_sets.append("rnd_state")
-        self.cfg["obs_groups"] = resolve_obs_groups(obs, self.cfg["obs_groups"], default_sets)
+        # self.cfg["obs_groups"] = resolve_obs_groups(obs, self.cfg["obs_groups"], default_sets) commented by chirag
 
         # create the algorithm
         self.alg = self._construct_algorithm(obs)
@@ -70,7 +75,43 @@ class OnPolicyRunner:
             )
 
         # start learning
+        #*The observations are being computed in unitree_rl_mjlab/mjlab/rl/vecenv_wrapper.py
         obs = self.env.get_observations().to(self.device)
+        
+        #TODO Would need to change what observations are being recieved here - INSPECT Observations first:
+        #*The observation contains the input for the policy and the critic atm, the critic has 48 observations
+        #*per agent, while the policy has 45, What are the three extra observations for the critic? 
+        #TODO The crific contains 7 "terms" i.e. lin_vel, ang_vel, gravity etc. while the policy contains 6 terms, not the base_lin_vel
+        #TODO hence critic contains 48 observations(45 + 3 values for the base_lin_vel)
+        #? PROPRIOCETIVE OBSERVATIONS:
+        # Body vel - lin + ang [X]
+        #! Orientation 
+        # Joint position - [X]
+        # Velocty HISTORY - [CAN BE ADDED FROM THE ONES THAT EXIST]
+        # ACTION HISTORY - [X]
+        #! LEG'S PHASE  
+        
+        #? EXTEROCEPTIVE OBSERVATIONS:
+        #! Heightmap arond the robot - [NEEDS TO BE COMPUTED AND ADDED]
+        
+        #? PRIVIELLGED OBSERVATIONS(CHECK REQUIRED):
+        #! CONTACT STATES
+        #! CONTACT FORCES
+        #! CONTACT NORMALS
+        #! FRICTION COEFFICIENTS
+        #! THIGH AND SHANK CONTACT STATES
+        #! EXTERNAL FORCES AND TORQUES ON THE BODY
+        
+        try:
+            #Inspect everything possible in observations
+            print("Observations received from the environment:", obs.shape)
+            print("Data type of observations:",type(obs))
+            print("Observation keys:", obs.keys())
+            for key in obs.keys():
+                print(f"Observation '{key}': shape {obs[key].shape}, dtype {obs[key].dtype}")
+        except Exception as e:            print(f"Error inspecting observations: {e}")
+        
+        import ipdb; ipdb.set_trace()
         self.train_mode()  # switch to train mode (for dropout for example)
 
         # Book keeping
@@ -101,7 +142,7 @@ class OnPolicyRunner:
             with torch.inference_mode():
                 for _ in range(self.num_steps_per_env):
                     # Sample actions
-                    actions = self.alg.act(obs)
+                    actions = self.alg.act(obs["policy"])
                     # Step the environment
                     obs, rewards, dones, extras = self.env.step(actions.to(self.env.device))
                     # Move to device
@@ -144,7 +185,7 @@ class OnPolicyRunner:
                 start = stop
 
                 # compute returns
-                self.alg.compute_returns(obs)
+                self.alg.compute_returns(obs["critic"])
 
             # update policy
             loss_dict = self.alg.update()
@@ -438,7 +479,7 @@ class OnPolicyRunner:
         # initialize the actor-critic
         actor_critic_class = eval(self.policy_cfg.pop("class_name"))
         actor_critic: ActorCritic | ActorCriticRecurrent = actor_critic_class(
-            obs, self.cfg["obs_groups"], self.env.num_actions, **self.policy_cfg
+            obs, self.cfg["obs_groups"], 12, **self.policy_cfg
         ).to(self.device)
 
         # initialize the algorithm

@@ -1,0 +1,10 @@
+[project]
+name = "unitree-rl-mjlab"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "tyro>=1.0.6",
+    "warp>=1.0.4",
+]

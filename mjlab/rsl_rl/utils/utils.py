@@ -271,7 +271,7 @@ def resolve_obs_groups(
             if group not in obs:
                 raise ValueError(
                     f"Observation '{group}' in observation set '{set_name}' not found in the observations from the"
-                    f" environment. Available observations from the environment: {list(obs.keys())}"
+                    f" environment. Available observations from the environment: {list(obs)}"
                 )
 
     # fill missing observation sets

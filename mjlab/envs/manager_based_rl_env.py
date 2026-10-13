@@ -40,6 +40,10 @@ from mjlab.viewer.viewer_config import ViewerConfig
 
 @dataclass(kw_only=True)
 class ManagerBasedRlEnvCfg:
+  """It is a manager based config because every aspect of the environment is handled by individual
+  modules"""
+  
+  
   """Configuration for a manager-based RL environment.
 
   This config defines all aspects of an RL environment: the physical scene,
@@ -214,6 +218,10 @@ class ManagerBasedRlEnv:
   def num_envs(self) -> int:
     """Number of parallel environments."""
     return self.scene.num_envs
+  
+  @property
+  def num_actions(self) -> int:
+      return self.single_action_space.shape[0]
 
   @property
   def physics_dt(self) -> float:

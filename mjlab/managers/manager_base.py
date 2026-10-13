@@ -132,6 +132,10 @@ class ManagerBase(abc.ABC):
 
   def _resolve_common_term_cfg(self, term_name: str, term_cfg: ManagerTermBaseCfg):
     del term_name  # Unused.
+    print("What Config are we talking about:",term_cfg)
+    try:
+      params = term_cfg.params
+    except Exception as e:      raise ValueError(f"Error accessing params of term '{term_name}': {e}")
     for value in term_cfg.params.values():
       if isinstance(value, SceneEntityCfg):
         value.resolve(self._env.scene)

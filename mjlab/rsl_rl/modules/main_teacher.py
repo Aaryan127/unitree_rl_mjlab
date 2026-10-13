@@ -10,26 +10,27 @@ from mjlab.rl import RslRlOnPolicyRunnerCfg
 from mjlab.rsl_rl.runners import OnPolicyRunner
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
 from dataclasses import asdict, dataclass, field
+from typing import Literal, cast
 
-@dataclass(frozen=True)
-class TrainConfig:
-    env: ManagerBasedRlEnvCfg
-    agent: RslRlOnPolicyRunnerCfg
-    motion_file: str | None = None
-    video: bool = False
-    video_length: int = 200
-    video_interval: int = 2000
-    enable_nan_guard: bool = False
-    torchrunx_log_dir: str | None = None
-    wandb_run_path: str | None = None
-    gpu_ids: list[int] | Literal["all"] | None = field(default_factory=lambda: [0])
+# @dataclass(frozen=True)
+# class TrainConfig:
+#     env: ManagerBasedRlEnvCfg
+#     agent: RslRlOnPolicyRunnerCfg
+#     motion_file: str | None = None
+#     video: bool = False
+#     video_length: int = 200
+#     video_interval: int = 2000
+#     enable_nan_guard: bool = False
+#     torchrunx_log_dir: str | None = None
+#     wandb_run_path: str | None = None
+#     gpu_ids: list[int] | Literal["all"] | None = field(default_factory=lambda: [0])
 
-    @staticmethod
-    def from_task(task_id: str) -> "TrainConfig":
-        env_cfg = load_env_cfg(task_id)
-        agent_cfg = load_rl_cfg(task_id)
-        assert isinstance(agent_cfg, RslRlOnPolicyRunnerCfg)
-        return TrainConfig(env=env_cfg, agent=agent_cfg)
+#     @staticmethod
+#     def from_task(task_id: str) -> "TrainConfig":
+#         env_cfg = load_env_cfg(task_id)
+#         agent_cfg = load_rl_cfg(task_id)
+#         assert isinstance(agent_cfg, RslRlOnPolicyRunnerCfg)
+#         return TrainConfig(env=env_cfg, agent=agent_cfg)
 
 # class Environment:
 #     """
@@ -69,7 +70,7 @@ class TeacherAgent:
         self.runner = OnPolicyRunner(env, agent_cfg, log_dir="", device=device)
         self.runner.load(checkpoint_path)
 
-        self.policy = self.runner.alg.actor_critic
+        self.policy = self.runner.alg.policy
         self.policy.eval()
         self.device = device
 
@@ -103,7 +104,7 @@ if __name__ == "__main__":
 
     # check from obs space
     # args.proprio_obs_dim = 10 #100
-    # args.extero_obs_dim = 20 #200
+    args.extero_obs_dim = 20 #200
     # args.action_dim = 12
 
     # args.action_dim = env.action_space.shape[0]
@@ -123,7 +124,7 @@ if __name__ == "__main__":
     #     device="cuda"
     # )
 
-    task_id = "go2_velocity"
+    task_id = "Mjlab-Velocity-Flat-Unitree-Go2"
 
     env_cfg = load_env_cfg(task_id)
     agent_cfg = load_rl_cfg(task_id)
@@ -134,7 +135,7 @@ if __name__ == "__main__":
 
     args.action_dim = env.action_space.shape[0]
     args.n_envs = env.num_envs
-    args.obs_dim = obs_dict["policy"].shape[-1]
+    args.proprio_obs_dim= obs_dict["policy"].shape[-1]
 
     with open("/media/ok/ubuntu/Quadruped_Projects/legged_rl/unitree_rl_mjlab/mjlab/rsl_rl/modules/config.yaml", "r") as f:
         cfg = yaml.safe_load(f)
