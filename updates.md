@@ -1,15 +1,19 @@
+## Immediate TODOs
+- [] Read https://arxiv.org/pdf/2010.11251 and understand the CPG implementation(What is F_i) @om update by [2-03-26] 
+- [] Can we directly use Gait in Eight? @om
+- [] Code the CPG for Unitree_mj 
+- [] Reduce the height map res for efficiency
+- [] Any other optimizations? - Training is slow.
+
 ## Todos
-- [] Look up the encoder arch in the supplemnentry section and change the teacher model - @asavari [23-02-26]
-- [] fix the IKM border values issue - @chirag -[17-03-26]
-- [] add the FGT to all legs and IKM to angles
+- [x] Look up the encoder arch in the supplemnentry section and change the teacher model - @asavari [23-02-26]
 - [x] Are the rewards different - If yes, modify. - @chirag and @asavari - [23-02-26]
-- [x] impliment FTG and analytical IKM (minimal)
-- [] Check the current OnPoicyRunner implementation - @Om @Mrigaank - [23-02-26 EOD]
-- [] Sort the observations for their respective target networks - Sm prop. goes to actor, some goes to critic etc. -@om @mrigaank [23-02-26]
-- [] Go Through the rest of this updates.md - Use ipdb or pdb to inspect - @all [ideally parallely]
-- [] Train and check - [24-02-26 HD]
-- [] Document all the work done so far - @all
-- [] Have individual heightmaps surrounding each leg - instead of a global grid.
+- [x] Check the current OnPoicyRunner implementation - @Om @Mrigaank - [23-02-26 EOD]
+- [x] Sort the observations for their respective target networks - Sm prop. goes to actor, some goes to critic etc. -@om @mrigaank [23-02-26]
+- [x] Go Through the rest of this updates.md - Use ipdb or pdb to inspect - @all [ideally parallely]
+- [ ] Train and check - [24-02-26 HD]
+- [-] Document all the work done so far - @all
+- [x] Have individual heightmaps surrounding each leg - instead of a global grid.
 ## Heat Check after the above have been setup
 - [] Inspect the observation space that goes as input to the network - Data type and Shape
 - [] Are Critic/Actor Networks receiving the right inputs?

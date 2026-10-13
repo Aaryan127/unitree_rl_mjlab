@@ -5,6 +5,9 @@
 
 import numpy as np
 
+#So we have the default(nominal) position of the foot - we can get the trajectory of the foot from the FTG module - which we will use to 
+#update the final position - which is then f
+
 class IK_module:
     def __init__(self):
         self.l1 = 0.067

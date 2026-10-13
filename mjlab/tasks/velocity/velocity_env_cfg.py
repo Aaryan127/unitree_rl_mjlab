@@ -53,7 +53,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
             func=mdp.generated_commands,
             params={"command_name": "twist"},
         ),
-        "body_observation": ObservationTermCfg(
+        "body_orientation": ObservationTermCfg(
             func=mdp.projected_gravity,
             noise=Unoise(n_min=-0.05, n_max=0.05),
         ),
@@ -141,6 +141,12 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
 
     actions: dict[str, ActionTermCfg] = {
         "joint_pos": JointPositionActionCfg(
+            entity_name="robot",
+            actuator_names=(".*",),
+            scale=0.5,  # Override per-robot.
+            use_default_offset=True,
+        ),
+        "joint_phase": JointPhaseActionCfg( #TODO: implement JointPhaseActionCfg
             entity_name="robot",
             actuator_names=(".*",),
             scale=0.5,  # Override per-robot.

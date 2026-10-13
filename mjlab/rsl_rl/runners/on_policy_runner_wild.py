@@ -43,7 +43,8 @@ class OnPolicyRunnerWild:
 
         # store training configuration
         self.num_steps_per_env = self.cfg["num_steps_per_env"]
-        self.save_interval = self.cfg["save_interval"]
+        # self.save_interval = self.cfg["save_interval"]
+        self.save_interval = 1
 
         # query observations from environment for algorithm construction
         obs = self.env.get_observations()
@@ -120,7 +121,14 @@ class OnPolicyRunnerWild:
             with torch.inference_mode():
                 for _ in range(self.num_steps_per_env):
                     # Sample actions
-                    actions = self.alg.act(obs)
+                    actions = self.alg.act(obs) #12 actions This needs to give 4 phases and 12 residuals - then we need to do FTG and AIK to get the final 12 actions
+                    #Here, get 4 more phases - then phase -> ftg -> aik -> 
+                    
+                    #You have delta Phi for each leg - from where? [four delta phases, 12 residual actions]
+                    # Four delta phases -> FTG -> AIK -> get 12 actions
+                    # FTG = (X,Y,Z) pos of the leg
+                    # 
+                    
                     # Step the environment
                     obs, rewards, dones, extras = self.env.step(
                         actions.to(self.env.device)

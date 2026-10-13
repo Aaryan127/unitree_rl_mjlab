@@ -74,7 +74,6 @@ def track_angular_velocity(
   reward[mask_else] = torch.exp(
       -(w[mask_else] - w_des[mask_else]) ** 2
   )
-  print(f"angular: {reward}")
   return reward
 
 def linear_orthogonal(
@@ -221,11 +220,11 @@ def feet_terrain_clearence(env: ManagerBasedRlEnv
     heights = heights.unsqueeze(1).expand(-1,4,-1)
     masked_heights = torch.where(mask,heights, torch.full_like(heights, -1e6))
     max_height = masked_heights.max(dim=2).values 
-    print(max_height.shape)
+    # print(max_height.shape)
     reward_mask = max_height - foot_z < -0.2
     reward = reward_mask * (-1)
     average_reward = reward.sum(dim=1)
-    print(average_reward)
+    # print(average_reward)
     return average_reward
 
 def feet_clearance(

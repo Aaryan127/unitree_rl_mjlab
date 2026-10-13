@@ -156,6 +156,13 @@ class BaseAction(ActionTerm):
 # Joint actions.
 ##
 
+# @dataclass(kw_only=True)
+# class PhaseResidualJointPosActionCgf(BaseActionCfg):
+#   num_legs: int
+#   actuator_names: tuple[str, ...] | list[str]
+#   phase_scale
+  
+
 
 @dataclass(kw_only=True)
 class JointPositionActionCfg(BaseActionCfg):

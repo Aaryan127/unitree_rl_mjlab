@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, cast
 import tyro
+import ipdb
 
 from mjlab.rsl_rl.runners import OnPolicyRunner, OnPolicyRunnerWild
 from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
@@ -92,7 +93,7 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
     env = ManagerBasedRlEnv(
         cfg=cfg.env, device=device, render_mode="rgb_array" if cfg.video else None
     )
-    # print(f"action: {env.action_space}")
+    print(f"action: {env.action_space}")
     # print(env.observation_space)
 
     log_root_path = log_dir.parent
@@ -157,7 +158,7 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
     
 
     runner.learn(
-        num_learning_iterations=cfg.agent.max_iterations, init_at_random_ep_len=True
+        num_learning_iterations=1500, init_at_random_ep_len=True
     )
 
     env.close()

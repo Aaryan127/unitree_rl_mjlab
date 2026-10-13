@@ -8,6 +8,8 @@ import pdb
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactSensor, RayCastSensor, BuiltinSensor
+from scipy.spatial.transform import Rotation as R
+import numpy as np
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
@@ -44,6 +46,7 @@ def foot_contact_forces(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tenso
   return torch.sign(forces_flat) * torch.log1p(torch.abs(forces_flat))
 
 def height_map(env: ManagerBasedRlEnv, sensor_name: str)-> torch.Tensor:
+  # REFACTOR: 1.2 - convert height_map to per-foot, multi-radius, foot-relative samples
   sensor: RayCastSensor = env.scene[sensor_name]
   sensor_data = sensor.data
   robot = env.scene.entities["robot"]
@@ -56,23 +59,44 @@ def height_map(env: ManagerBasedRlEnv, sensor_name: str)-> torch.Tensor:
   ]
   # pdb.set_trace()
   foot_pos = robot.data.site_pos_w[:, foot_ids, :]
-  radius = 0.2
+  # Sample radii around each foot (per-paper): 5 concentric radii
+  radii = [0.05, 0.10, 0.15, 0.20, 0.25]
 
-  # --- Proper Broadcasting ---
-  # hit_pos → (E, 1, 121, 2)
-  # foot_pos → (E, 4, 1, 2)
-  diff = hit_pos[:, None, :, :2] - foot_pos[:, :, None, :2]
-  # shape: (E, 4, 121, 2)
-  dist = torch.norm(diff, dim=-1)
-  # shape: (E, 4, 121)
-  mask = dist < radius
-  # Use HEIGHTS, not normals
-  heights = hit_pos[..., 2]  # (E, 121)
-  # Expand heights to match mask
-  heights = heights[:, None, :]  # (E, 1, 121)
-  # Compute mean height per foot
-  map = heights*mask
-  return torch.sign(map) *  torch.log1p(torch.abs(map))
+  # hit_pos: (E, S, 3) where S is number of samples (e.g. 121)
+  # foot_pos: (E, 4, 3)
+  # For each foot and each radius, compute samples that fall within that radius
+  # and return the height values relative to the foot z-position.
+
+  # precompute 2D positions
+  hit_xy = hit_pos[..., :2]  # (E, S, 2)
+  foot_xy = foot_pos[..., :2]  # (E, 4, 2)
+  foot_z = foot_pos[..., 2]  # (E, 4)
+
+  # diff: (E, 4, S, 2)
+  diff = hit_xy[:, None, :, :] - foot_xy[:, :, None, :]
+  dist = torch.norm(diff, dim=-1)  # (E, 4, S)
+
+  heights = hit_pos[..., 2]  # (E, S)
+
+  per_foot_rad_heights = []
+  for r in radii:
+    mask = dist <= r  # (E, 4, S)
+    masked_heights = torch.where(mask, heights[:, None, :], torch.full_like(heights[:, None, :], float("nan")))
+    # mean over sample dim (S); nanmean yields NaN if no True samples
+    mean_heights = torch.nanmean(masked_heights, dim=-1)  # (E,4)
+    # Convert to height relative to foot z
+    rel = mean_heights - foot_z
+    per_foot_rad_heights.append(rel)
+
+  # Stack radii features: list of (E,4) -> (E,4,R)
+  features = torch.stack(per_foot_rad_heights, dim=-1)
+  # Flatten per-foot per-radius to shape (E, 4*R)
+  E, F, R = features.shape
+  out = features.reshape(E, F * R)
+  # Replace NaNs (from no samples) with 0.0
+  out = torch.nan_to_num(out, nan=0.0)
+  # Log-compress to keep numeric range small (match other obs formatting)
+  return torch.sign(out) * torch.log1p(torch.abs(out))
 
 def external_forces(env: ManagerBasedRlEnv) -> torch.Tensor:
   # import pdb; pdb.set_trace()
@@ -178,3 +202,25 @@ def body_velocity(env: ManagerBasedRlEnv):
   robot = env.scene.entities["robot"]
   assert robot.data.root_link_vel_w is not None
   return robot.data.root_link_vel_w
+
+
+def quat_to_rpy_scipy(quat: torch.Tensor):
+    """
+    quat: (N, 4) tensor in (w, x, y, z)
+    returns: (N, 3) tensor (roll, pitch, yaw) in radians
+    """
+
+    q_np = quat.detach().cpu().numpy()
+
+    q_scipy = np.column_stack((q_np[:, 1], q_np[:, 2], q_np[:, 3], q_np[:, 0]))
+
+    r = R.from_quat(q_scipy)
+
+    rpy = r.as_euler('xyz', degrees=False)
+
+    return torch.from_numpy(rpy).to(quat.device)
+
+def body_orientation(env: ManagerBasedRlEnv):
+  robot = env.scene.entities["robot"]
+  assert robot.data.root_link_pos_w is not None
+  return robot.data.root_link_pos_w

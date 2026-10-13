@@ -18,7 +18,7 @@ _SCENE_XML = Path(__file__).parent / "scene.xml"
 @dataclass(kw_only=True)
 class SceneCfg:
   num_envs: int = 1
-  env_spacing: float = 2.0
+  env_spacing: float = 10
   terrain: TerrainImporterCfg | None = None
   entities: dict[str, EntityCfg] = field(default_factory=dict)
   sensors: tuple[SensorCfg, ...] = field(default_factory=tuple)
