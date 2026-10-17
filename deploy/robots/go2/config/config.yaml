@@ -1,11 +1,15 @@
 FSM:
-  _: # enabled fsms
+  _: # enabled fsms. Every enabled RL state loads its policy.onnx at startup.
     Passive:
       id: 1
     FixStand:
       id: 2
-    Velocity:
-      id: 3
+    # Stock velocity policy: re-enable once config/policy/velocity/v0/exported/policy.onnx exists.
+    # Velocity:
+    #   id: 3
+    #   type: RLBase
+    PGTT:  # PGTT teacher-student policy (scripts/export_deploy.py writes config/policy/pgtt/v0)
+      id: 4
       type: RLBase
   Passive:
     transitions: 
@@ -16,6 +20,7 @@ FSM:
     transitions: 
       Passive: LT + B.on_pressed
       Velocity: RT + A.on_pressed
+      PGTT: RT + X.on_pressed
     kp: [60, 80, 80, 60, 80, 80, 60, 80, 80, 60, 80, 80]
     kd: [5, 4, 4, 5, 4, 4, 5, 4, 4, 5, 4, 4]
     ts: [0, 1, 2]
@@ -28,4 +33,8 @@ FSM:
     transitions: 
       Passive: LT + B.on_pressed
     policy_dir: config/policy/velocity
-    
+  PGTT:
+    transitions:
+      Passive: LT + B.on_pressed
+      FixStand: LT + up.on_pressed
+    policy_dir: config/policy/pgtt

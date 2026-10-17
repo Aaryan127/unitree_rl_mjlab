@@ -110,3 +110,65 @@ class RslRlOnPolicyRunnerCfg(RslRlBaseRunnerCfg):
   """The policy configuration."""
   algorithm: RslRlPpoAlgorithmCfg = field(default_factory=RslRlPpoAlgorithmCfg)
   """The algorithm configuration."""
+
+
+##
+# PGTT teacher-student (see mjlab/rsl_rl/modules/actor_critic_wild.py and
+# student_teacher_wild.py).
+##
+
+
+@dataclass
+class RslRlPpoActorCriticWildCfg(RslRlPpoActorCriticCfg):
+  """Teacher actor-critic: TeacherMLP actor (height + privileged encoders) + MLP critic."""
+
+  actor_obs_normalization: bool = True
+  critic_obs_normalization: bool = True
+  actor_hidden_dims: Tuple[int, ...] = (512, 256, 128)
+  critic_hidden_dims: Tuple[int, ...] = (512, 256, 128)
+  height_latent_dim: int = 32
+  """Size of the encoded height map."""
+  privileged_latent_dim: int = 16
+  """Size of the encoded privileged state."""
+  height_encoder_dims: Tuple[int, ...] = (128, 64)
+  privileged_encoder_dims: Tuple[int, ...] = (64, 32)
+  class_name: str = "ActorCriticWild"
+
+
+@dataclass
+class RslRlStudentTeacherWildCfg(RslRlPpoActorCriticWildCfg):
+  """Student-teacher module. Inherits the teacher fields so both architectures match."""
+
+  init_noise_std: float = 0.1
+  """Exploration noise of the student while collecting distillation data."""
+  student_obs_normalization: bool = True
+  rnn_hidden_dim: int = 256
+  rnn_num_layers: int = 1
+  belief_dims: Tuple[int, ...] = (64, 64)
+  """Hidden sizes of the belief gate / state MLPs and of the decoder."""
+  class_name: str = "StudentTeacherWild"
+
+
+@dataclass
+class RslRlDistillationWildAlgorithmCfg:
+  num_learning_epochs: int = 1
+  gradient_length: int = 24
+  """Truncated BPTT length (steps). Equal to num_steps_per_env = one step per rollout."""
+  learning_rate: float = 5e-4
+  max_grad_norm: float | None = 1.0
+  loss_type: Literal["mse", "huber"] = "mse"
+  reconstruction_coef: float = 0.5
+  """Weight of the height / privileged reconstruction loss."""
+  class_name: str = "DistillationWild"
+
+
+@dataclass
+class RslRlDistillationRunnerCfg(RslRlBaseRunnerCfg):
+  class_name: str = "DistillationRunner"
+  policy: RslRlStudentTeacherWildCfg = field(default_factory=RslRlStudentTeacherWildCfg)
+  algorithm: RslRlDistillationWildAlgorithmCfg = field(
+    default_factory=RslRlDistillationWildAlgorithmCfg
+  )
+  teacher_experiment_name: str = ""
+  """If no --teacher-checkpoint is given, the latest checkpoint of this experiment
+  (logs/rsl_rl/<name>/) is used as the teacher."""

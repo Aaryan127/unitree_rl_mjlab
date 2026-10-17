@@ -10,3 +10,7 @@ from mjlab.utils.noise.noise_model import NoiseModel as NoiseModel
 from mjlab.utils.noise.noise_model import (
   NoiseModelWithAdditiveBias as NoiseModelWithAdditiveBias,
 )
+from mjlab.utils.noise.noise_cfg import (
+  HeightScanNoiseModelCfg as HeightScanNoiseModelCfg,
+)
+from mjlab.utils.noise.noise_model import HeightScanNoiseModel as HeightScanNoiseModel

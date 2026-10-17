@@ -22,7 +22,8 @@ from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.velocity import mdp
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.terrains import TerrainImporterCfg
-from mjlab.terrains.config import ROUGH_TERRAINS_CFG
+from mjlab.terrains.config import PGTT_STAIRS_TERRAINS_CFG, ROUGH_TERRAINS_CFG
+from mjlab.utils.noise import HeightScanNoiseModelCfg
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
 
@@ -349,6 +350,364 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     sim=SimulationCfg(
       nconmax=35,
       njmax=300,
+      mujoco=MujocoCfg(
+        timestep=0.005,
+        iterations=10,
+        ls_iterations=20,
+      ),
+    ),
+    decimation=4,
+    episode_length_s=20.0,
+  )
+
+
+def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
+  """PGTT teacher-student task (Ntagkas et al. 2025 + Miki et al. 2022 distillation).
+
+  Observation groups (who uses them is set by `obs_groups` in the RL config):
+
+    policy          proprio + gait phase, noisy          teacher actor, student, ROBOT
+    proprio_history joint pos/vel/action history, noisy  teacher actor
+    height          clean height scan                    teacher actor, critic
+    height_noisy    corrupted height scan                student, ROBOT
+    privileged      contacts, friction, pushes, lin vel  teacher actor, critic
+    critic          proprio + base lin vel, clean        critic
+
+  Robot-specific values (sensor patterns, foot/geom/body names) are set in
+  config/<robot>/env_cfgs.py, exactly like `make_velocity_env_cfg`.
+  """
+
+  ##
+  # Observations
+  ##
+
+  # Everything in "policy" must be computable on the real robot. The order here is
+  # the order of the deployed observation vector (see scripts/export_deploy.py).
+  policy_terms = {
+    "base_ang_vel": ObservationTermCfg(
+      func=mdp.builtin_sensor,
+      params={"sensor_name": "robot/imu_ang_vel"},
+      noise=Unoise(n_min=-0.2, n_max=0.2),
+    ),
+    "projected_gravity": ObservationTermCfg(
+      func=mdp.projected_gravity,
+      noise=Unoise(n_min=-0.05, n_max=0.05),
+    ),
+    "command": ObservationTermCfg(
+      func=mdp.generated_commands,
+      params={"command_name": "twist"},
+    ),
+    "joint_pos": ObservationTermCfg(
+      func=mdp.joint_pos_rel,
+      noise=Unoise(n_min=-0.01, n_max=0.01),
+    ),
+    "joint_vel": ObservationTermCfg(
+      func=mdp.joint_vel_rel,
+      noise=Unoise(n_min=-1.5, n_max=1.5),
+    ),
+    "actions": ObservationTermCfg(func=mdp.last_action),
+    "gait_phase": ObservationTermCfg(
+      func=mdp.gait_phase,
+      params={"command_name": "gait"},
+    ),
+  }
+
+  proprio_history_terms = {
+    "joint_pos_history": ObservationTermCfg(
+      func=mdp.joint_pos_rel,
+      noise=Unoise(n_min=-0.01, n_max=0.01),
+      history_length=3,
+    ),
+    "joint_vel_history": ObservationTermCfg(
+      func=mdp.joint_vel_rel,
+      noise=Unoise(n_min=-1.5, n_max=1.5),
+      history_length=2,
+    ),
+    "action_history": ObservationTermCfg(func=mdp.last_action, history_length=2),
+  }
+
+  height_params = {"sensor_name": "height_scanner", "base_height": 0.25, "clip": 1.0}
+  height_terms = {
+    "height_scan": ObservationTermCfg(func=mdp.height_scan, params=height_params),
+  }
+  height_noisy_terms = {
+    "height_scan": ObservationTermCfg(
+      func=mdp.height_scan,
+      params=height_params,
+      noise=HeightScanNoiseModelCfg(),
+      clip=(-1.0, 1.0),
+    ),
+  }
+
+  privileged_terms = {
+    "base_lin_vel": ObservationTermCfg(func=mdp.base_lin_vel),
+    "foot_contact": ObservationTermCfg(
+      func=mdp.foot_contact, params={"sensor_name": "feet_ground_contact"}
+    ),
+    "foot_contact_forces": ObservationTermCfg(
+      func=mdp.foot_contact_forces, params={"sensor_name": "feet_ground_contact"}
+    ),
+    "foot_contact_normals": ObservationTermCfg(
+      func=mdp.contact_normals, params={"sensor_name": "feet_ground_normals"}
+    ),
+    "foot_friction": ObservationTermCfg(
+      func=mdp.geom_friction,
+      params={"asset_cfg": SceneEntityCfg("robot", geom_names=())},  # Set per-robot.
+    ),
+    "leg_ground_contact": ObservationTermCfg(
+      func=mdp.foot_contact, params={"sensor_name": "leg_ground_contact"}
+    ),
+    "base_external_wrench": ObservationTermCfg(
+      func=mdp.body_external_wrench,
+      params={"asset_cfg": SceneEntityCfg("robot", body_names=())},  # Set per-robot.
+      scale=0.1,
+    ),
+  }
+
+  critic_terms = {
+    "base_lin_vel": ObservationTermCfg(func=mdp.base_lin_vel),
+    **policy_terms,
+  }
+
+  observations = {
+    "policy": ObservationGroupCfg(terms=policy_terms, enable_corruption=True),
+    "proprio_history": ObservationGroupCfg(
+      terms=proprio_history_terms, enable_corruption=True
+    ),
+    "height": ObservationGroupCfg(terms=height_terms, enable_corruption=False),
+    "height_noisy": ObservationGroupCfg(
+      terms=height_noisy_terms, enable_corruption=True
+    ),
+    "privileged": ObservationGroupCfg(terms=privileged_terms, enable_corruption=False),
+    "critic": ObservationGroupCfg(terms=critic_terms, enable_corruption=False),
+  }
+
+  ##
+  # Actions
+  ##
+
+  actions: dict[str, ActionTermCfg] = {
+    "joint_pos": JointPositionActionCfg(
+      entity_name="robot",
+      actuator_names=(".*",),
+      scale=0.25,
+      use_default_offset=True,
+    )
+  }
+
+  ##
+  # Commands
+  ##
+
+  commands: dict[str, CommandTermCfg] = {
+    # PGTT: commands uniform in [-1, 1], resampled about once per episode.
+    "twist": UniformVelocityCommandCfg(
+      entity_name="robot",
+      resampling_time_range=(8.0, 12.0),
+      rel_standing_envs=0.05,
+      heading_command=False,
+      debug_vis=True,
+      ranges=UniformVelocityCommandCfg.Ranges(
+        lin_vel_x=(-1.0, 1.0),
+        lin_vel_y=(-1.0, 1.0),
+        ang_vel_z=(-1.0, 1.0),
+      ),
+    ),
+    "gait": mdp.GaitPhaseCommandCfg(
+      leg_names=("FL", "FR", "RL", "RR"),  # Override per-robot if needed.
+      frequency_range=(1.0, 3.0),
+    ),
+  }
+
+  ##
+  # Events
+  ##
+
+  events = {
+    "reset_base": EventTermCfg(
+      func=mdp.reset_root_state_uniform,
+      mode="reset",
+      params={
+        "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-3.14, 3.14)},
+        "velocity_range": {},
+      },
+    ),
+    "reset_robot_joints": EventTermCfg(
+      func=mdp.reset_joints_by_offset,
+      mode="reset",
+      params={
+        "position_range": (-0.1, 0.1),
+        "velocity_range": (0.0, 0.0),
+        "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+      },
+    ),
+    "push_robot": EventTermCfg(
+      func=mdp.push_by_setting_velocity,
+      mode="interval",
+      interval_range_s=(4.0, 8.0),
+      params={"velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5)}},
+    ),
+    # A real force on the base (unlike push_robot), so the privileged
+    # base_external_wrench observation is non-zero and the teacher can react to it.
+    "external_wrench": EventTermCfg(
+      func=mdp.apply_external_force_torque,
+      mode="interval",
+      interval_range_s=(3.0, 6.0),
+      params={
+        "force_range": (-15.0, 15.0),
+        "torque_range": (-2.0, 2.0),
+        "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
+      },
+    ),
+    "body_friction": EventTermCfg(
+      mode="startup",
+      func=mdp.randomize_field,
+      domain_randomization=True,
+      params={
+        "asset_cfg": SceneEntityCfg("robot", geom_names=".*_collision"),
+        "operation": "abs",
+        "field": "geom_friction",
+        "ranges": (0.3, 1.2),
+      },
+    ),
+    "base_mass": EventTermCfg(
+      mode="startup",
+      func=mdp.randomize_field,
+      domain_randomization=True,
+      params={
+        "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
+        "operation": "add",
+        "field": "body_mass",
+        "ranges": (-1.0, 2.0),
+      },
+    ),
+    "base_com": EventTermCfg(
+      mode="startup",
+      func=mdp.randomize_field,
+      domain_randomization=True,
+      params={
+        "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
+        "operation": "add",
+        "field": "body_ipos",
+        "ranges": {0: (-0.05, 0.05), 1: (-0.05, 0.05), 2: (-0.05, 0.05)},
+      },
+    ),
+    "encoder_bias": EventTermCfg(
+      mode="startup",
+      func=mdp.randomize_encoder_bias,
+      params={
+        "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+        "bias_range": (-0.015, 0.015),
+      },
+    ),
+  }
+
+  ##
+  # Rewards (PGTT Table I). mjlab multiplies every term by dt, so only the ratios
+  # between weights matter.
+  ##
+
+  rewards = {
+    "track_lin_vel": RewardTermCfg(
+      func=mdp.track_lin_vel_xy_exp,
+      weight=1.0,
+      params={"command_name": "twist", "sigma": 0.25},
+    ),
+    "track_ang_vel": RewardTermCfg(
+      func=mdp.track_ang_vel_z_exp,
+      weight=0.5,
+      params={"command_name": "twist", "sigma": 0.25},
+    ),
+    "lin_vel_z": RewardTermCfg(func=mdp.lin_vel_z_l2, weight=-2.0),
+    "ang_vel_xy": RewardTermCfg(func=mdp.ang_vel_xy_l2, weight=-0.05),
+    "orientation": RewardTermCfg(func=mdp.flat_orientation_l2, weight=-0.2),
+    "termination": RewardTermCfg(func=mdp.is_terminated, weight=-1.0),
+    "joint_power": RewardTermCfg(func=mdp.joint_power, weight=-2e-5),
+    "action_rate": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.01),
+    "joint_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-1.0),
+    "default_pose": RewardTermCfg(
+      func=mdp.weighted_default_pose,
+      weight=-0.5,
+      params={
+        "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+        "weights": {},  # Set per-robot.
+      },
+    ),
+    "joint_torques": RewardTermCfg(func=mdp.joint_torques_l2, weight=-1e-5),
+    "foot_phase": RewardTermCfg(
+      func=mdp.foot_phase_tracking,
+      weight=1.0,
+      params={
+        "command_name": "gait",
+        "sensor_name": "height_scanner",
+        "stance_height": 0.0,  # Set per-robot (foot site height when standing).
+        "swing_height": 0.08,
+        # PGTT's sigma_f = 0.05 is read as a 5 cm standard deviation.
+        "sigma": 0.05**2,
+        "terrain_radius": 0.15,
+        "max_terrain_delta": 0.15,
+        "asset_cfg": SceneEntityCfg("robot"),
+      },
+    ),
+    "swing_contact": RewardTermCfg(
+      func=mdp.swing_foot_contact,
+      weight=-0.25,
+      params={"sensor_name": "feet_ground_contact", "command_name": "gait"},
+    ),
+  }
+
+  ##
+  # Terminations (PGTT: only when the robot turns over)
+  ##
+
+  terminations = {
+    "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
+    "fell_over": TerminationTermCfg(
+      func=mdp.bad_orientation,
+      params={"limit_angle": math.radians(90.0)},
+    ),
+  }
+
+  ##
+  # Curriculum
+  ##
+
+  curriculum = {
+    "terrain_levels": CurriculumTermCfg(
+      func=mdp.terrain_levels_vel,
+      params={"command_name": "twist"},
+    ),
+  }
+
+  return ManagerBasedRlEnvCfg(
+    scene=SceneCfg(
+      terrain=TerrainImporterCfg(
+        terrain_type="generator",
+        terrain_generator=replace(PGTT_STAIRS_TERRAINS_CFG),
+        max_init_terrain_level=3,
+      ),
+      num_envs=1,
+      extent=2.0,
+    ),
+    observations=observations,
+    actions=actions,
+    commands=commands,
+    events=events,
+    rewards=rewards,
+    terminations=terminations,
+    curriculum=curriculum,
+    viewer=ViewerConfig(
+      origin_type=ViewerConfig.OriginType.ASSET_BODY,
+      entity_name="robot",
+      body_name="",  # Set per-robot.
+      distance=3.0,
+      elevation=-5.0,
+      azimuth=90.0,
+    ),
+    sim=SimulationCfg(
+      # Stairs (box edges, shank contacts) create more contacts than rough terrain.
+      nconmax=64,
+      njmax=400,
       mujoco=MujocoCfg(
         timestep=0.005,
         iterations=10,

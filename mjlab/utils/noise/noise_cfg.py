@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import abc
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import ClassVar, Literal
 
 import torch
@@ -134,3 +134,27 @@ class NoiseModelWithAdditiveBiasCfg(
       raise ValueError(
         "bias_noise_cfg must be specified for NoiseModelWithAdditiveBiasCfg"
       )
+
+
+@dataclass(kw_only=True)
+class HeightScanNoiseModelCfg(
+  NoiseModelCfg, class_type=noise_model.HeightScanNoiseModel
+):
+  """Configuration for the student height-map noise model. Values are in meters."""
+
+  noise_cfg: NoiseCfg = field(default_factory=lambda: GaussianNoiseCfg(std=0.02))
+  """Per-step, per-cell jitter."""
+  offset_std: float = 0.05
+  """Std of the per-episode vertical offset of the whole map."""
+  drift_std: float = 0.002
+  """Std of the per-step random walk of the offset."""
+  max_offset: float = 0.15
+  """Offset is clamped to [-max_offset, max_offset]."""
+  outlier_prob: float = 0.02
+  """Probability that a cell is replaced by a uniform outlier."""
+  outlier_range: float = 0.3
+  """Outliers are uniform in [-outlier_range, outlier_range]."""
+  missing_prob: float = 0.05
+  """Probability that a cell has no data (reported as 0)."""
+  blind_prob: float = 0.05
+  """Probability that a whole episode has no height map (all zeros)."""

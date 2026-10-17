@@ -55,6 +55,52 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
 )
 
 
+# PGTT (Ntagkas et al. 2025) trains on stairs with step height 1-13 cm and step
+# width 0.30-0.45 m. Rows are difficulty levels, so step height grows from 1 cm
+# (row 0) to 13 cm (row 9). The stairs generator takes a single step width, so each
+# stairs type is added twice with two widths.
+_PGTT_STAIRS_HEIGHT = (0.01, 0.13)
+
+PGTT_STAIRS_TERRAINS_CFG = TerrainGeneratorCfg(
+  size=(8.0, 8.0),
+  border_width=20.0,
+  num_rows=10,
+  num_cols=20,
+  sub_terrains={
+    "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.2),
+    "stairs_up_30": terrain_gen.BoxPyramidStairsTerrainCfg(
+      proportion=0.2,
+      step_height_range=_PGTT_STAIRS_HEIGHT,
+      step_width=0.30,
+      platform_width=3.0,
+      border_width=1.0,
+    ),
+    "stairs_up_40": terrain_gen.BoxPyramidStairsTerrainCfg(
+      proportion=0.2,
+      step_height_range=_PGTT_STAIRS_HEIGHT,
+      step_width=0.40,
+      platform_width=3.0,
+      border_width=1.0,
+    ),
+    "stairs_down_30": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
+      proportion=0.2,
+      step_height_range=_PGTT_STAIRS_HEIGHT,
+      step_width=0.30,
+      platform_width=3.0,
+      border_width=1.0,
+    ),
+    "stairs_down_40": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
+      proportion=0.2,
+      step_height_range=_PGTT_STAIRS_HEIGHT,
+      step_width=0.40,
+      platform_width=3.0,
+      border_width=1.0,
+    ),
+  },
+  add_lights=True,
+)
+
+
 if __name__ == "__main__":
   import mujoco.viewer
   import torch

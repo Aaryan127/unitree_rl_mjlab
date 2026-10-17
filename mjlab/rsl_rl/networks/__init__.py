@@ -5,6 +5,8 @@
 
 """Definitions for components of modules."""
 
+from .belief_encoder import BeliefDecoder, BeliefEncoder, StudentPolicyWild
 from .memory import Memory
 from .mlp import MLP
 from .normalization import EmpiricalDiscountedVariationNormalization, EmpiricalNormalization
+from .teacher_mlp import TeacherMLP

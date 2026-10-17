@@ -9,9 +9,13 @@ INSTALL_REQUIRES = [
     "tyro>=1.0.1",
     "torch>=2.7.0",
     "torchrunx>=0.3.4",
-    "warp-lang>=1.11.0.dev20251211",
+    # Pinned: the mujoco-warp commit from doc/setup_en.md fails with newer
+    # mujoco ('MjData' has no attribute 'qM') and newer warp (kernel codegen error).
+    "warp-lang==1.11.1",
     "mujoco-warp",
-    "mujoco>=3.4.0",
+    "mujoco==3.4.0",
+    "scipy",  # imported by mjlab/terrains/heightfield_terrains.py
+    "onnxruntime",  # scripts/export_deploy.py verifies the exported policy
     "trimesh>=4.8.3",
     "viser>=1.0.16",
     "moviepy",

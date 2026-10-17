@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Literal, cast
 import tyro
 
-from mjlab.rsl_rl.runners import OnPolicyRunner
+from mjlab.rsl_rl.runners import DistillationRunner, OnPolicyRunner
 from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
-from mjlab.rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
+from mjlab.rl import RslRlDistillationRunnerCfg, RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
 from mjlab.tasks.tracking.mdp import MotionCommandCfg
 from mjlab.utils.gpu import select_gpus
@@ -24,8 +24,11 @@ from mjlab.utils.wrappers import VideoRecorder
 @dataclass(frozen=True)
 class TrainConfig:
     env: ManagerBasedRlEnvCfg
-    agent: RslRlOnPolicyRunnerCfg
+    agent: RslRlOnPolicyRunnerCfg | RslRlDistillationRunnerCfg
     motion_file: str | None = None
+    teacher_checkpoint: str | None = None
+    """Distillation only: teacher model_*.pt. Default: latest checkpoint of
+    agent.teacher_experiment_name."""
     video: bool = False
     video_length: int = 200
     video_interval: int = 2000
@@ -38,7 +41,7 @@ class TrainConfig:
     def from_task(task_id: str) -> "TrainConfig":
         env_cfg = load_env_cfg(task_id)
         agent_cfg = load_rl_cfg(task_id)
-        assert isinstance(agent_cfg, RslRlOnPolicyRunnerCfg)
+        assert isinstance(agent_cfg, (RslRlOnPolicyRunnerCfg, RslRlDistillationRunnerCfg))
         return TrainConfig(env=env_cfg, agent=agent_cfg)
 
 
@@ -127,10 +130,17 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
     agent_cfg = asdict(cfg.agent)
     env_cfg = asdict(cfg.env)
 
-    runner_cls = OnPolicyRunner
+    # PPO (teacher, stock tasks) or distillation (student), chosen by the RL config.
+    runner_cls = DistillationRunner if cfg.agent.class_name == "DistillationRunner" else OnPolicyRunner
+    print(f"[INFO] Runner: {runner_cls.__name__}")
 
     runner_kwargs = {}
     runner = runner_cls(env, agent_cfg, str(log_dir), device, **runner_kwargs)
+
+    if runner_cls is DistillationRunner and resume_path is None:
+        teacher_path = _resolve_teacher_checkpoint(cfg)
+        print(f"[INFO] Loading teacher from: {teacher_path}")
+        runner.load(str(teacher_path), load_optimizer=False, map_location=device)
 
     add_wandb_tags(cfg.agent.wandb_tags)
     runner.add_git_repo_to_log(__file__)
@@ -148,6 +158,18 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
     )
 
     env.close()
+
+
+def _resolve_teacher_checkpoint(cfg: TrainConfig) -> Path:
+    if cfg.teacher_checkpoint is not None:
+        path = Path(cfg.teacher_checkpoint)
+        if not path.exists():
+            raise FileNotFoundError(f"Teacher checkpoint not found: {path}")
+        return path
+    teacher_experiment = getattr(cfg.agent, "teacher_experiment_name", "")
+    if not teacher_experiment:
+        raise ValueError("Distillation needs --teacher-checkpoint or agent.teacher_experiment_name.")
+    return Path(get_checkpoint_path(Path("logs") / "rsl_rl" / teacher_experiment, ".*", "model_.*.pt"))
 
 
 def launch_training(task_id: str, args: TrainConfig | None = None):

@@ -82,3 +82,53 @@ class NoiseModelWithAdditiveBias(NoiseModel):
     self._initialize_bias_shape(data.shape)
     noisy_data = super().__call__(data)
     return noisy_data + self._bias
+
+
+class HeightScanNoiseModel(NoiseModel):
+  """Height-map corruption for the student policy (Miki et al. 2022 style).
+
+  Models what a real LiDAR elevation map does wrong:
+    - per-step Gaussian jitter on every cell (noise_cfg)
+    - a per-episode vertical offset of the whole map that drifts every step
+    - outlier cells (random spikes)
+    - missing cells, reported as 0 (= "flat ground at nominal height")
+    - whole episodes without any map ("blind"), also reported as 0
+
+  0 is used for missing data because the real robot sends all zeros when no height
+  map is available, so the student learns that case explicitly.
+  """
+
+  def __init__(
+    self,
+    noise_model_cfg: noise_cfg.HeightScanNoiseModelCfg,
+    num_envs: int,
+    device: str,
+  ):
+    super().__init__(noise_model_cfg, num_envs, device)
+    self._cfg = noise_model_cfg
+    self._offset = torch.zeros((num_envs, 1), device=device)
+    self._blind = torch.zeros((num_envs, 1), dtype=torch.bool, device=device)
+    self.reset()
+
+  @override
+  def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
+    indices = slice(None) if env_ids is None else env_ids
+    n = self._offset[indices].shape[0]
+    self._offset[indices] = torch.randn((n, 1), device=self._device) * self._cfg.offset_std
+    self._blind[indices] = torch.rand((n, 1), device=self._device) < self._cfg.blind_prob
+
+  @override
+  def __call__(self, data: torch.Tensor) -> torch.Tensor:
+    cfg = self._cfg
+    self._offset += torch.randn_like(self._offset) * cfg.drift_std
+    self._offset.clamp_(-cfg.max_offset, cfg.max_offset)
+
+    noisy = super().__call__(data) + self._offset
+    outliers = torch.rand_like(data) < cfg.outlier_prob
+    noisy = torch.where(
+      outliers,
+      (torch.rand_like(data) * 2.0 - 1.0) * cfg.outlier_range,
+      noisy,
+    )
+    missing = (torch.rand_like(data) < cfg.missing_prob) | self._blind
+    return torch.where(missing, torch.zeros_like(noisy), noisy)

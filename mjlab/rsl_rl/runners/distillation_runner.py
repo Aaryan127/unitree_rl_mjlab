@@ -11,9 +11,9 @@ import torch
 from collections import deque
 
 import mjlab.rsl_rl
-from mjlab.rsl_rl.algorithms import Distillation
+from mjlab.rsl_rl.algorithms import Distillation, DistillationWild  # noqa: F401  (eval(class_name))
 from mjlab.rsl_rl.env import VecEnv
-from mjlab.rsl_rl.modules import StudentTeacher, StudentTeacherRecurrent
+from mjlab.rsl_rl.modules import StudentTeacher, StudentTeacherRecurrent, StudentTeacherWild  # noqa: F401
 from mjlab.rsl_rl.runners import OnPolicyRunner
 from mjlab.rsl_rl.utils import resolve_obs_groups, store_code_state
 

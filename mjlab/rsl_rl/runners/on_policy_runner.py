@@ -15,7 +15,13 @@ from collections import deque
 import rsl_rl
 from mjlab.rsl_rl.algorithms import PPO
 from mjlab.rsl_rl.env import VecEnv
-from mjlab.rsl_rl.modules import ActorCritic, ActorCriticRecurrent, resolve_rnd_config, resolve_symmetry_config
+from mjlab.rsl_rl.modules import (  # noqa: F401  (names used by eval(class_name))
+    ActorCritic,
+    ActorCriticRecurrent,
+    ActorCriticWild,
+    resolve_rnd_config,
+    resolve_symmetry_config,
+)
 from mjlab.rsl_rl.utils import resolve_obs_groups, store_code_state
 from mjlab.rsl_rl.utils.exporter import export_policy_as_jit, export_policy_as_onnx
 
@@ -318,12 +324,16 @@ class OnPolicyRunner:
             self.writer.save_model(path, self.current_learning_iteration)
 
         policy_path = path.split("model")[0]
-        export_policy_as_onnx(
-            policy=self.alg.policy,
-            normalizer=self.alg.policy.actor_obs_normalizer,
-            path=policy_path,
-            filename="policy.onnx",
-        )
+        if hasattr(self.alg.policy, "export_onnx"):
+            # Custom modules (ActorCriticWild, StudentTeacherWild) know their own inputs.
+            self.alg.policy.export_onnx(policy_path)
+        else:
+            export_policy_as_onnx(
+                policy=self.alg.policy,
+                normalizer=self.alg.policy.actor_obs_normalizer,
+                path=policy_path,
+                filename="policy.onnx",
+            )
 
     def load(self, path: str, load_optimizer: bool = True, map_location: str | None = None):
         loaded_dict = torch.load(path, weights_only=False, map_location=map_location)

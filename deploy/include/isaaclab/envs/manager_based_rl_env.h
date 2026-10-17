@@ -51,6 +51,7 @@ public:
     {
         global_phase = 0;
         episode_length = 0;
+        if (alg) alg->reset();  // e.g. clear the recurrent state of the PGTT student
         robot->update();
         action_manager->reset();
         observation_manager->reset();
