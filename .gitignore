@@ -7,5 +7,6 @@ MUJOCO_LOG.TXT
 deploy/robots/go2/build
 deploy/robots/g1/build
 deploy/robots/g1_23dof/build
-deploy/robots/h1_2/build.venv/
+deploy/robots/h1_2/build
+.venv/
 __pycache__/
