@@ -158,3 +158,12 @@ class HeightScanNoiseModelCfg(
   """Probability that a cell has no data (reported as 0)."""
   blind_prob: float = 0.05
   """Probability that a whole episode has no height map (all zeros)."""
+  noisy_episode_prob: float = 0.1
+  """Probability that an episode is "noisy": jitter and outlier rate x noisy_scale."""
+  noisy_scale: float = 5.0
+  shift_prob: float = 0.1
+  """Probability that an episode's map is shifted horizontally (misaligned)."""
+  max_shift_cells: int = 1
+  """Shift of up to this many cells in x and y (1 cell = scanner resolution)."""
+  grid_shape: tuple[int, int] | None = None
+  """(rows, cols) of the height grid = (y points, x points); needed for the shift."""

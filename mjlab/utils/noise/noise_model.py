@@ -93,6 +93,9 @@ class HeightScanNoiseModel(NoiseModel):
     - outlier cells (random spikes)
     - missing cells, reported as 0 (= "flat ground at nominal height")
     - whole episodes without any map ("blind"), also reported as 0
+    - "noisy" episodes with much stronger jitter and more outliers (Miki's NOISY type)
+    - a per-episode horizontal shift of the map by whole cells (map misaligned with the
+      robot; the cpu branch's Map_noise_cfg). Needs `grid_shape`.
 
   0 is used for missing data because the real robot sends all zeros when no height
   map is available, so the student learns that case explicitly.
@@ -108,23 +111,52 @@ class HeightScanNoiseModel(NoiseModel):
     self._cfg = noise_model_cfg
     self._offset = torch.zeros((num_envs, 1), device=device)
     self._blind = torch.zeros((num_envs, 1), dtype=torch.bool, device=device)
+    self._noisy = torch.zeros((num_envs, 1), dtype=torch.bool, device=device)
+    self._shift = torch.zeros((num_envs, 2), dtype=torch.long, device=device)  # (rows, cols)
     self.reset()
 
   @override
   def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
+    cfg = self._cfg
     indices = slice(None) if env_ids is None else env_ids
     n = self._offset[indices].shape[0]
-    self._offset[indices] = torch.randn((n, 1), device=self._device) * self._cfg.offset_std
-    self._blind[indices] = torch.rand((n, 1), device=self._device) < self._cfg.blind_prob
+    self._offset[indices] = torch.randn((n, 1), device=self._device) * cfg.offset_std
+    self._blind[indices] = torch.rand((n, 1), device=self._device) < cfg.blind_prob
+    self._noisy[indices] = torch.rand((n, 1), device=self._device) < cfg.noisy_episode_prob
+    shift = torch.randint(
+      -cfg.max_shift_cells, cfg.max_shift_cells + 1, (n, 2), device=self._device
+    )
+    shifted = torch.rand((n, 1), device=self._device) < cfg.shift_prob
+    self._shift[indices] = shift * shifted
+
+  def _shift_map(self, data: torch.Tensor) -> torch.Tensor:
+    rows, cols = self._cfg.grid_shape  # type: ignore[misc]
+    b = data.shape[0]
+    grid = data.view(b, rows, cols)
+    r = (torch.arange(rows, device=data.device)[None] - self._shift[:, :1]).clamp(0, rows - 1)
+    c = (torch.arange(cols, device=data.device)[None] - self._shift[:, 1:]).clamp(0, cols - 1)
+    batch = torch.arange(b, device=data.device)[:, None, None]
+    return grid[batch, r[:, :, None], c[:, None, :]].reshape(b, -1)
 
   @override
   def __call__(self, data: torch.Tensor) -> torch.Tensor:
     cfg = self._cfg
+    if cfg.grid_shape is not None and cfg.max_shift_cells > 0:
+      data = self._shift_map(data)
+
     self._offset += torch.randn_like(self._offset) * cfg.drift_std
     self._offset.clamp_(-cfg.max_offset, cfg.max_offset)
 
-    noisy = super().__call__(data) + self._offset
-    outliers = torch.rand_like(data) < cfg.outlier_prob
+    jitter = super().__call__(data) - data  # noise_cfg applied to the map
+    jitter = torch.where(self._noisy, jitter * cfg.noisy_scale, jitter)
+    noisy = data + jitter + self._offset
+
+    outlier_prob = torch.where(
+      self._noisy,
+      torch.full_like(self._offset, cfg.outlier_prob * cfg.noisy_scale),
+      torch.full_like(self._offset, cfg.outlier_prob),
+    )
+    outliers = torch.rand_like(data) < outlier_prob
     noisy = torch.where(
       outliers,
       (torch.rand_like(data) * 2.0 - 1.0) * cfg.outlier_range,

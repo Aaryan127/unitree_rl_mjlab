@@ -29,6 +29,7 @@ from mjlab.scene import Scene
 from mjlab.scene.scene import SceneCfg
 from mjlab.sim import SimulationCfg
 from mjlab.sim.sim import Simulation
+from mjlab.utils import debug as _debug
 from mjlab.utils import random as random_utils
 from mjlab.utils.logging import print_info
 from mjlab.utils.spaces import Box
@@ -318,6 +319,8 @@ class ManagerBasedRlEnv:
     return self.obs_buf, self.extras
 
   def step(self, action: torch.Tensor) -> types.VecEnvStepReturn:
+    if _debug.ENABLED:  # opt-in prints / pdb stops (mjlab/utils/debug.py)
+      _debug.step_hook(self, action)
     self.action_manager.process_action(action.to(self.device))
 
     for _ in range(self.cfg.decimation):

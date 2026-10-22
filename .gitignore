@@ -10,3 +10,6 @@ deploy/robots/g1_23dof/build
 deploy/robots/h1_2/build
 .venv/
 __pycache__/
+
+# Personal learning guide (not tracked)
+CODE_GUIDE.md

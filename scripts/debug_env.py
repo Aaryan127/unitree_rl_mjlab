@@ -45,6 +45,42 @@ class DebugConfig:
   env_id: int = 0
   """Which robot's values to print."""
   breakpoint: bool = False
+  config: bool = False
+  """Only print the task's reward / curriculum / observation configuration and exit
+  (the always-up-to-date version of the cpu branch's current_reward_cfg.md)."""
+
+
+def _short(value) -> str:
+  """Readable one-line version of a config parameter value."""
+  if hasattr(value, "name") and hasattr(value, "joint_names"):  # SceneEntityCfg
+    picked = {
+      k: getattr(value, k)
+      for k in ("joint_names", "body_names", "geom_names", "site_names")
+      if getattr(value, k)
+    }
+    return f"SceneEntityCfg({value.name!r}{', ' if picked else ''}{picked if picked else ''})"
+  if isinstance(value, float):
+    return f"{value:g}"
+  return repr(value)
+
+
+def print_config(env_cfg) -> None:
+  """Rewards (weight + params), curriculum and observation groups, straight from the config."""
+  print("\n=== Rewards (weight 0 = off) ===")
+  for name, term in env_cfg.rewards.items():
+    params = ", ".join(f"{k}={_short(v)}" for k, v in term.params.items())
+    func = getattr(term.func, "__name__", type(term.func).__name__)
+    print(f"   {name:20s} {term.weight:+10.2e}  {func}({params})")
+  print("\n=== Curriculum ===")
+  for name, term in env_cfg.curriculum.items():
+    params = ", ".join(f"{k}={_short(v)}" for k, v in term.params.items())
+    print(f"   {name:24s} {getattr(term.func, '__name__', '')}({params})")
+  print("\n=== Observation groups (noise on/off) ===")
+  for group, gcfg in env_cfg.observations.items():
+    terms = ", ".join(gcfg.terms.keys())
+    print(f"   {group:16s} corruption={gcfg.enable_corruption!s:5s}  [{terms}]")
+  print("\nOverride anything from the command line, e.g. "
+        "--env.rewards.foot-phase.weight 2.0 (underscores -> dashes).")
 
 
 def _stats(x: torch.Tensor) -> str:
@@ -111,6 +147,9 @@ def main() -> None:
   cfg = tyro.cli(DebugConfig, args=remaining, prog=f"{sys.argv[0]} {task}")
 
   env_cfg = load_env_cfg(task, play=cfg.play)
+  if cfg.config:
+    print_config(env_cfg)
+    return
   env_cfg.scene.num_envs = cfg.num_envs
   terrain = env_cfg.scene.terrain
   if cfg.small_terrain and terrain is not None and terrain.terrain_generator is not None:

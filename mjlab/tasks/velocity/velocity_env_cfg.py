@@ -654,6 +654,55 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=-0.25,
       params={"sensor_name": "feet_ground_contact", "command_name": "gait"},
     ),
+    ##
+    # Optional terms (weight 0 = off and not computed). Not in PGTT; from the cpu
+    # branch / Miki et al. 2022 for experiments. Enable from the command line, e.g.
+    #   --env.rewards.swing-clearance.weight -0.5
+    ##
+    "swing_clearance": RewardTermCfg(  # swing foot lower than the terrain around it
+      func=mdp.swing_terrain_clearance,
+      weight=0.0,
+      params={
+        "command_name": "gait",
+        "sensor_name": "height_scanner",
+        "radius": 0.15,
+        "margin": 0.02,
+        "asset_cfg": SceneEntityCfg("robot"),
+      },
+    ),
+    "stance_on_edge": RewardTermCfg(  # stance foot planted on a step edge
+      func=mdp.stance_on_edge,
+      weight=0.0,
+      params={
+        "command_name": "gait",
+        "sensor_name": "height_scanner",
+        "radius": 0.06,
+        "asset_cfg": SceneEntityCfg("robot"),
+      },
+    ),
+    "leg_contact": RewardTermCfg(  # thigh/shank touching the terrain
+      func=mdp.leg_ground_contact_count,
+      weight=0.0,
+      params={"sensor_name": "leg_ground_contact"},
+    ),
+    "foot_slip": RewardTermCfg(  # foot sliding while in contact
+      func=mdp.feet_slip,
+      weight=0.0,
+      params={
+        "sensor_name": "feet_ground_contact",
+        "command_name": "twist",
+        "command_threshold": 0.1,
+        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+      },
+    ),
+    "lin_vel_orthogonal": RewardTermCfg(  # sideways drift off the commanded direction
+      func=mdp.lin_vel_orthogonal_l2,
+      weight=0.0,
+      params={"command_name": "twist"},
+    ),
+    "joint_vel": RewardTermCfg(func=mdp.joint_vel_l2, weight=0.0),
+    "joint_acc": RewardTermCfg(func=mdp.joint_acc_l2, weight=0.0),
+    "action_smoothness": RewardTermCfg(func=mdp.action_acc_l2, weight=0.0),  # 2nd difference
   }
 
   ##
@@ -678,6 +727,24 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
       params={"command_name": "twist"},
     ),
   }
+  # Regularization curriculum (Miki et al. 2022): penalties start at 10 % of their weight
+  # and reach 100 % after ~1500 iterations (x 24 steps), so the robot learns to walk
+  # before it is pushed to walk smoothly. Disable one with
+  #   --env.curriculum.ramp-joint-power.params.start-scale 1.0
+  for reward_name in (
+    "joint_power",
+    "joint_torques",
+    "action_rate",
+    "action_smoothness",
+    "joint_vel",
+    "joint_acc",
+    "foot_slip",
+    "leg_contact",
+  ):
+    curriculum[f"ramp_{reward_name}"] = CurriculumTermCfg(
+      func=mdp.reward_weight_ramp,
+      params={"reward_name": reward_name, "start_scale": 0.1, "ramp_steps": 1500 * 24},
+    )
 
   return ManagerBasedRlEnvCfg(
     scene=SceneCfg(

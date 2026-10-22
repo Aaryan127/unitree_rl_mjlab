@@ -105,3 +105,37 @@ def reward_weight(
     if env.common_step_counter > stage["step"]:
       reward_term_cfg.weight = stage["weight"]
   return torch.tensor([reward_term_cfg.weight])
+
+
+class reward_weight_ramp:
+  """Ramp a reward's weight from `start_scale` x to 1 x its configured weight.
+
+  Miki et al. 2022 (and the cpu branch) start regularization penalties small so the
+  robot first learns to walk, then to walk smoothly. Unlike `reward_weight`, this
+  scales whatever weight the reward has at startup, so a command-line override such as
+  `--env.rewards.joint-power.weight -4e-5` is respected, and a reward with weight 0
+  stays switched off.
+
+    scale(step) = start_scale + (1 - start_scale) * min(1, step / ramp_steps)
+
+  `step` is env.common_step_counter (policy steps, ~num_steps_per_env per iteration).
+  Set start_scale=1.0 to disable the ramp. Logged as Curriculum/<term name>.
+  """
+
+  def __init__(self, cfg, env: ManagerBasedRlEnv):
+    reward_cfg = env.reward_manager.get_term_cfg(cfg.params["reward_name"])
+    self.base_weight = reward_cfg.weight
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    env_ids: torch.Tensor,
+    reward_name: str,
+    start_scale: float,
+    ramp_steps: int,
+  ) -> torch.Tensor:
+    del env_ids  # Unused.
+    progress = min(1.0, env.common_step_counter / max(ramp_steps, 1))
+    scale = start_scale + (1.0 - start_scale) * progress
+    env.reward_manager.get_term_cfg(reward_name).weight = self.base_weight * scale
+    return torch.tensor([scale])

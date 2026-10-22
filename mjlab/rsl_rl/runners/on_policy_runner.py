@@ -23,6 +23,7 @@ from mjlab.rsl_rl.modules import (  # noqa: F401  (names used by eval(class_name
     resolve_symmetry_config,
 )
 from mjlab.rsl_rl.utils import resolve_obs_groups, store_code_state
+from mjlab.utils import debug as _debug
 from mjlab.rsl_rl.utils.exporter import export_policy_as_jit, export_policy_as_onnx
 
 
@@ -77,6 +78,7 @@ class OnPolicyRunner:
 
         # start learning
         obs = self.env.get_observations().to(self.device)
+        _debug.print_obs_wiring(obs, self.cfg["obs_groups"])  # only with MJLAB_DEBUG=1
         self.train_mode()  # switch to train mode (for dropout for example)
 
         # Book keeping
@@ -154,6 +156,8 @@ class OnPolicyRunner:
 
             # update policy
             loss_dict = self.alg.update()
+            if _debug.ENABLED:  # opt-in NaN checks / pdb stops (mjlab/utils/debug.py)
+                _debug.update_hook(loss_dict, it)
 
             stop = time.time()
             learn_time = stop - start

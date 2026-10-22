@@ -247,6 +247,9 @@ def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # Foot site is the center of the 2.2 cm foot sphere, so it sits 2.2 cm above the
   # ground when standing.
   cfg.rewards["foot_phase"].params["stance_height"] = 0.022
+  cfg.rewards["foot_slip"].params["asset_cfg"].site_names = _LEGS
+  # Height grid layout (rows = y points, cols = x points) for the student's map-shift noise.
+  cfg.observations["height_noisy"].terms["height_scan"].noise.grid_shape = (9, 11)  # type: ignore[union-attr]
 
   ##
   # Play mode
@@ -258,7 +261,8 @@ def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       cfg.observations[group].enable_corruption = False
     cfg.events.pop("push_robot", None)
     cfg.events.pop("external_wrench", None)
-    cfg.curriculum.pop("terrain_levels", None)
+    for name in list(cfg.curriculum):  # no terrain or reward curriculum in play mode
+      cfg.curriculum.pop(name)
     if cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:
       cfg.scene.terrain.terrain_generator.curriculum = False
       cfg.scene.terrain.terrain_generator.num_cols = 5

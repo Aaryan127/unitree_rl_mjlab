@@ -23,6 +23,23 @@ How to use the branch and what each file does: see [instruction.md](instruction.
 - [ ] Real robot: blind test on flat ground first (no height map -> zeros)
 - [ ] Elevation-mapping bridge: LiDAR -> robot-centric 11 x 9 grid -> UDP (see open items)
 
+## 2026-10-22: debugging and tuning features from the cpu branch, done safely
+- Opt-in debug mode `mjlab/utils/debug.py` (MJLAB_DEBUG / MJLAB_DEBUG_NAN / MJLAB_BREAK), one guarded
+  hook line in the observation manager, reward manager, env.step and both runners. Off = no cost.
+- Regularization curriculum `reward_weight_ramp` (Miki; cpu's reward_weight stages): joint_power,
+  joint_torques, action_rate (+ optional penalties) start at 10 % and reach 100 % at 1500 iterations.
+- Optional rewards, weight 0 by default: swing_clearance (cpu's inverted feet_terrain_clearence,
+  fixed), stance_on_edge, leg_contact (cpu's shank_knee_collision, now leg-vs-ground), foot_slip,
+  lin_vel_orthogonal (Miki), joint_vel, joint_acc, action_smoothness (cpu's target_smoothness).
+- Shared `_foot_terrain` helper for terrain-aware rewards (foot_phase_tracking refactored onto it).
+- Student height-map noise: noisy episodes (Miki's NOISY type) and horizontal map shift (cpu's
+  Map_noise_cfg).
+- `debug_env.py --config` (live version of cpu's current_reward_cfg.md), `scripts/pgtt.sh` (portable
+  train.sh), how-tos in instruction.md.
+- Verified on CPU: debug prints/breaks/NaN checks, teacher with an optional term on, student,
+  export (ONNX matches PyTorch).
+- Not taken from cpu: FTG/IK (PGTT replaces it), MJX/JAX port (unfinished), .agent docs.
+
 ## Observation spec (as implemented)
 
 | group | terms | dims | used by |

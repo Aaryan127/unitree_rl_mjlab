@@ -519,7 +519,50 @@ def desired_foot_height(
   return torch.where(phase < math.pi, torch.full_like(phase, stance_height), target)
 
 
-class foot_phase_tracking:
+def _foot_terrain(
+  env: ManagerBasedRlEnv,
+  site_ids: list[int],
+  sensor_name: str,
+  radius: float,
+  asset_name: str = "robot",
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+  """Terrain around each foot, measured with the height-scan rays.
+
+  Returns (all [B, L], L = number of feet):
+    foot_z    foot site height (world)
+    ground_z  height of the nearest valid ray hit = ground directly under the foot
+    z_max     highest terrain within `radius` of the foot (ground_z if no ray is near)
+    z_min     lowest terrain within `radius` of the foot (ground_z if no ray is near)
+  """
+  foot_pos = env.scene[asset_name].data.site_pos_w[:, site_ids]  # [B, L, 3]
+  scan = env.scene[sensor_name].data
+  hit_z = scan.hit_pos_w[..., 2]  # [B, N]
+  valid = (scan.distances >= 0).unsqueeze(1)  # [B, 1, N]
+  dist = torch.norm(
+    scan.hit_pos_w[:, None, :, :2] - foot_pos[:, :, None, :2], dim=-1
+  )  # [B, L, N]
+
+  nearest = torch.argmin(torch.where(valid, dist, torch.inf), dim=-1)  # [B, L]
+  ground_z = torch.gather(hit_z, 1, nearest)  # [B, L]
+
+  near = valid & (dist < radius)
+  any_near = near.any(dim=-1)
+  hit_z_l = hit_z.unsqueeze(1).expand_as(dist)
+  z_max = torch.where(any_near, torch.where(near, hit_z_l, -torch.inf).amax(dim=-1), ground_z)
+  z_min = torch.where(any_near, torch.where(near, hit_z_l, torch.inf).amin(dim=-1), ground_z)
+  return foot_pos[..., 2], ground_z, z_max, z_min
+
+
+class _GaitFeetTerm:
+  """Base for class terms that need the foot sites in gait-leg order."""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    asset: Entity = env.scene[cfg.params["asset_cfg"].name]
+    gait_cfg = env.command_manager.get_term_cfg(cfg.params["command_name"])
+    self.site_ids, _ = asset.find_sites(gait_cfg.leg_names, preserve_order=True)
+
+
+class foot_phase_tracking(_GaitFeetTerm):
   """PGTT foot-phase reward: sum_i exp(-(p_des_i - p_i)^2 / sigma).
 
   p_i is the foot height above the ground directly under the foot, and p_des_i comes
@@ -527,12 +570,6 @@ class foot_phase_tracking:
   `terrain_radius` of the foot. Both are measured with the height-scan rays, so the
   reward follows the terrain.
   """
-
-  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
-    asset: Entity = env.scene[cfg.params["asset_cfg"].name]
-    gait_cfg = env.command_manager.get_term_cfg(cfg.params["command_name"])
-    site_ids, _ = asset.find_sites(gait_cfg.leg_names, preserve_order=True)
-    self.site_ids = site_ids
 
   def __call__(
     self,
@@ -546,30 +583,13 @@ class foot_phase_tracking:
     max_terrain_delta: float,
     asset_cfg: SceneEntityCfg,
   ) -> torch.Tensor:
-    asset: Entity = env.scene[asset_cfg.name]
     gait = env.command_manager.get_term(command_name)
-    scan = env.scene[sensor_name].data
+    foot_z, ground_z, z_max, z_min = _foot_terrain(
+      env, self.site_ids, sensor_name, terrain_radius, asset_cfg.name
+    )
+    delta = torch.clamp(z_max - z_min, 0.0, max_terrain_delta)
 
-    foot_pos = asset.data.site_pos_w[:, self.site_ids]  # [B, L, 3]
-    hit_z = scan.hit_pos_w[..., 2]  # [B, N]
-    valid = (scan.distances >= 0).unsqueeze(1)  # [B, 1, N]
-    dist = torch.norm(
-      scan.hit_pos_w[:, None, :, :2] - foot_pos[:, :, None, :2], dim=-1
-    )  # [B, L, N]
-
-    # Ground directly under each foot = nearest valid ray.
-    nearest = torch.argmin(torch.where(valid, dist, torch.inf), dim=-1)  # [B, L]
-    ground_z = torch.gather(hit_z, 1, nearest)  # [B, L]
-
-    # Terrain variation around each foot.
-    near = valid & (dist < terrain_radius)
-    hit_z_l = hit_z.unsqueeze(1).expand_as(dist)
-    z_max = torch.where(near, hit_z_l, -torch.inf).amax(dim=-1)
-    z_min = torch.where(near, hit_z_l, torch.inf).amin(dim=-1)
-    delta = torch.where(near.any(dim=-1), z_max - z_min, torch.zeros_like(ground_z))
-    delta = torch.clamp(delta, 0.0, max_terrain_delta)
-
-    foot_height = foot_pos[..., 2] - ground_z
+    foot_height = foot_z - ground_z
     target = desired_foot_height(gait.phase, delta, stance_height, swing_height)
     error = torch.square(target - foot_height)
 
@@ -577,3 +597,83 @@ class foot_phase_tracking:
     log["Metrics/foot_height_error"] = torch.mean(torch.sqrt(error))
     log["Metrics/terrain_delta_mean"] = torch.mean(delta)
     return torch.sum(torch.exp(-error / sigma), dim=1)
+
+
+##
+# Optional terrain-aware and regularization terms (from the cpu branch and Miki et al.
+# 2022, with the cpu-branch bugs fixed). They are registered with weight 0 in
+# make_pgtt_env_cfg (a weight of 0 skips the computation entirely); enable one from
+# the command line, e.g.  --env.rewards.swing-clearance.weight -0.5
+##
+
+
+class swing_terrain_clearance(_GaitFeetTerm):
+  """Miki foot clearance: number of swing feet lower than the terrain around them.
+
+  A swing foot whose height is below (highest terrain within `radius`) + `margin` is
+  about to hit a step edge. (The cpu branch had this inverted: it penalized feet that
+  were HIGH above the terrain.)
+  """
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    command_name: str,
+    sensor_name: str,
+    radius: float,
+    margin: float,
+    asset_cfg: SceneEntityCfg,
+  ) -> torch.Tensor:
+    gait = env.command_manager.get_term(command_name)
+    foot_z, _, z_max, _ = _foot_terrain(env, self.site_ids, sensor_name, radius, asset_cfg.name)
+    too_low = foot_z < z_max + margin
+    return torch.sum((too_low & gait.swing_mask).float(), dim=1)
+
+
+class stance_on_edge(_GaitFeetTerm):
+  """Metres of terrain unevenness under stance feet: penalize planting a foot on an edge."""
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    command_name: str,
+    sensor_name: str,
+    radius: float,
+    asset_cfg: SceneEntityCfg,
+  ) -> torch.Tensor:
+    gait = env.command_manager.get_term(command_name)
+    _, _, z_max, z_min = _foot_terrain(env, self.site_ids, sensor_name, radius, asset_cfg.name)
+    return torch.sum((z_max - z_min) * (~gait.swing_mask).float(), dim=1)
+
+
+def leg_ground_contact_count(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
+  """Number of thigh/shank geoms touching the terrain (Miki r_shank_contact).
+
+  Uses a leg-vs-terrain sensor (the cpu branch used a thigh-vs-shank self-contact
+  sensor, which never sees the ground).
+  """
+  sensor: ContactSensor = env.scene[sensor_name]
+  assert sensor.data.found is not None
+  return torch.sum((sensor.data.found > 0).float(), dim=1)
+
+
+def lin_vel_orthogonal_l2(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  command_threshold: float = 0.1,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """|velocity component perpendicular to the commanded direction|^2 (Miki).
+
+  Zero when the command is (almost) zero, where the direction is undefined.
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  command = env.command_manager.get_command(command_name)
+  assert command is not None, f"Command '{command_name}' not found."
+  v = asset.data.root_link_lin_vel_b[:, :2]
+  c = command[:, :2]
+  c_norm = torch.norm(c, dim=1, keepdim=True)
+  direction = c / torch.clamp(c_norm, min=1e-6)
+  v_orth = v - torch.sum(v * direction, dim=1, keepdim=True) * direction
+  active = (c_norm.squeeze(1) > command_threshold).float()
+  return torch.sum(torch.square(v_orth), dim=1) * active

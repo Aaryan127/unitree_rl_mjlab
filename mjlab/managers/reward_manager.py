@@ -10,6 +10,7 @@ import torch
 from prettytable import PrettyTable
 
 from mjlab.managers.manager_base import ManagerBase, ManagerTermBaseCfg
+from mjlab.utils import debug as _debug
 
 if TYPE_CHECKING:
   from mjlab.envs.manager_based_rl_env import ManagerBasedRlEnv
@@ -123,6 +124,8 @@ class RewardManager(ManagerBase):
         continue
       value = term_cfg.func(self._env, **term_cfg.params) * term_cfg.weight * scale
       # NaN/Inf can occur from corrupted physics state; zero them to avoid policy crash.
+      if _debug.ENABLED:  # opt-in prints / NaN checks / pdb stops (mjlab/utils/debug.py)
+        _debug.reward_hook(self._env, name, value, scale)
       value = torch.nan_to_num(value, nan=0.0, posinf=0.0, neginf=0.0)
       self._reward_buf += value
       self._episode_sums[name] += value

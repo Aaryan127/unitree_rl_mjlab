@@ -48,6 +48,34 @@ A 3-iteration training smoke test (about 1 minute on CPU):
 CUDA_VISIBLE_DEVICES="" python scripts/train.py Mjlab-Velocity-PGTT-Teacher-Unitree-Go2 --env.scene.num-envs=16 --agent.max-iterations=3
 ```
 
+### Shortcuts and debug switches
+`scripts/pgtt.sh` wraps the common commands (`config`, `debug`, `smoke`, `teacher`, `student`,
+`play`, `latest`, `tb`, `export`; `scripts/pgtt.sh help`). Opt-in debug switches work with any
+command: `MJLAB_DEBUG=1` (term summaries, network wiring, reward-balance table),
+`MJLAB_DEBUG_NAN=1` (find the term that produced a NaN), `MJLAB_BREAK=reward:foot_phase`
+(stop in pdb after a term; also `obs:<group>[/<term>]`, `step`, `update`). Details:
+`mjlab/utils/debug.py` and CODE_GUIDE Part 7.
+
+### How-to (the cpu branch's checklists, for this branch)
+**Add a sensor:** add a `ContactSensorCfg` / `RayCastSensorCfg` in `unitree_go2_pgtt_env_cfg`
+(`config/go2/env_cfgs.py`) and put it in `cfg.scene.sensors`. Contact sensors select geoms by
+name (`ContactMatch(mode="geom", pattern=...)`); use `debug_env.py` to check `found`/`force`.
+
+**Add an observation:** write `def my_obs(env, ...) -> Tensor [B, D]` in
+`mjlab/tasks/velocity/mdp/observations.py`; add an `ObservationTermCfg(func=mdp.my_obs, ...)` to
+a group in `make_pgtt_env_cfg`. Robot-measurable → `policy` (and the C++ side needs it too);
+simulator-only → `privileged`. The network input size changes, so train from scratch.
+
+**Add a reward:** write it in `mjlab/tasks/velocity/mdp/rewards.py` (terrain-aware: copy
+`stance_on_edge`, use `_foot_terrain`); return a positive amount `[B]`; register it in the
+`rewards` dict with `weight=0.0`; check with `debug_env.py`; enable with
+`--env.rewards.<name>.weight <w>`.
+
+**Ramp a penalty in over training:** add
+`curriculum["ramp_<name>"] = CurriculumTermCfg(func=mdp.reward_weight_ramp, params={"reward_name": "<name>", "start_scale": 0.1, "ramp_steps": 1500 * 24})`
+(see the loop at the end of `make_pgtt_env_cfg`). It scales the configured weight, so
+command-line weights still work.
+
 ## 3. Train (GPU)
 
 ```bash
@@ -127,7 +155,10 @@ Training (Python):
 | `mjlab/rsl_rl/algorithms/distillation_wild.py` | Distillation loss = action imitation + reconstruction. |
 | `mjlab/rsl_rl/runners/*.py`, `mjlab/rl/config.py` | Runners know the new classes; config dataclasses for them. |
 | `scripts/train.py` | Picks PPO or distillation from the config; loads the teacher for the student. |
-| `scripts/debug_env.py` | Debugging tool (section 2). |
+| `scripts/debug_env.py` | Debugging tool (section 2); `--config` prints all rewards/curriculum/obs groups. |
+| `scripts/pgtt.sh` | Shortcuts for config, debug, smoke, train, play, export. |
+| `mjlab/utils/debug.py` | Opt-in debug mode (`MJLAB_DEBUG`, `MJLAB_DEBUG_NAN`, `MJLAB_BREAK`) hooked into the managers, env step and runners. |
+| `mjlab/tasks/velocity/mdp/curriculums.py` | `reward_weight_ramp`: regularization curriculum. |
 | `scripts/export_deploy.py` | ONNX + deploy.yaml export and verification. |
 | `scripts/send_height_map.py` | Test sender for the robot's height map link. |
 

@@ -9,6 +9,7 @@ import torch
 from prettytable import PrettyTable
 
 from mjlab.managers.manager_base import ManagerBase, ManagerTermBaseCfg
+from mjlab.utils import debug as _debug
 from mjlab.utils.buffers import CircularBuffer, DelayBuffer
 from mjlab.utils.noise import noise_cfg, noise_model
 from mjlab.utils.noise.noise_cfg import NoiseCfg, NoiseModelCfg
@@ -293,6 +294,8 @@ class ObservationManager(ManagerBase):
           group_obs[term_name] = circular_buffer.buffer
       else:
         group_obs[term_name] = obs
+      if _debug.ENABLED:  # opt-in prints / NaN checks / pdb stops (mjlab/utils/debug.py)
+        _debug.observation_hook(self._env, group_name, term_name, group_obs[term_name])
     if self._group_obs_concatenate[group_name]:
       return torch.cat(
         list(group_obs.values()), dim=self._group_obs_concatenate_dim[group_name]
