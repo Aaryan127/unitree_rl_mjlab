@@ -663,6 +663,13 @@ def randomize_effort_limits(
   if not isinstance(actuators, list):
     actuators = [actuators]
 
+  # Unwrap DelayedActuators to access base actuators (as randomize_pd_gains does).
+  from mjlab.actuator.delayed_actuator import DelayedActuator
+
+  actuators = [
+    a.base_actuator if isinstance(a, DelayedActuator) else a for a in actuators
+  ]
+
   for actuator in actuators:
     ctrl_ids = actuator.ctrl_ids
     num_actuators = len(ctrl_ids)

@@ -7,6 +7,7 @@ import mujoco
 from mjlab.asset_zoo.robots import (
   get_go2_robot_cfg,
 )
+from mjlab.actuator.delayed_actuator import DelayedActuatorCfg
 from mjlab.asset_zoo.robots.unitree_go2 import go2_constants
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
@@ -160,8 +161,19 @@ def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """Unitree Go2 PGTT stairs task, shared by the teacher (PPO) and student (distillation)."""
   cfg = make_pgtt_env_cfg()
 
+  # Go2 with named calf geoms and DELAYED actuators: the position target can reach the
+  # motor 0-20 ms late (sampled per episode by the actuator_delay event), as on the real
+  # robot where commands travel over DDS.
+  go2 = get_go2_robot_cfg()
+  delayed = DelayedActuatorCfg(
+    base_cfg=go2_constants.GO2_ACTUATOR_GO2HV, delay_target="position", delay_max_lag=4
+  )
   cfg.scene.entities = {
-    "robot": replace(get_go2_robot_cfg(), spec_fn=_go2_spec_with_named_calves)
+    "robot": replace(
+      go2,
+      spec_fn=_go2_spec_with_named_calves,
+      articulation=replace(go2.articulation, actuators=(delayed,)),
+    )
   }
 
   foot_geoms = tuple(f"{leg}_foot_collision" for leg in _LEGS)
@@ -255,6 +267,7 @@ def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   for event in ("base_mass", "base_com", "external_wrench"):
     cfg.events[event].params["asset_cfg"].body_names = ("base_link",)
+  cfg.events["link_mass"].params["asset_cfg"].body_names = (r".*_(hip|thigh|calf)",)
 
   privileged = cfg.observations["privileged"].terms
   privileged["foot_friction"].params["asset_cfg"].geom_names = foot_geoms

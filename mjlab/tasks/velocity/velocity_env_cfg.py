@@ -384,14 +384,18 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
   # Everything in "policy" must be computable on the real robot. The order here is
   # the order of the deployed observation vector (see scripts/export_deploy.py).
   policy_terms = {
+    # delay_max_lag=1: readings may be up to 1 control step (20 ms) old, as on the real
+    # robot (sensor -> DDS -> controller latency). Sim-to-real robustness.
     "base_ang_vel": ObservationTermCfg(
       func=mdp.builtin_sensor,
       params={"sensor_name": "robot/imu_ang_vel"},
       noise=Unoise(n_min=-0.2, n_max=0.2),
+      delay_max_lag=1,
     ),
     "projected_gravity": ObservationTermCfg(
       func=mdp.projected_gravity,
       noise=Unoise(n_min=-0.05, n_max=0.05),
+      delay_max_lag=1,
     ),
     "command": ObservationTermCfg(
       func=mdp.generated_commands,
@@ -400,10 +404,12 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
     "joint_pos": ObservationTermCfg(
       func=mdp.joint_pos_rel,
       noise=Unoise(n_min=-0.01, n_max=0.01),
+      delay_max_lag=1,
     ),
     "joint_vel": ObservationTermCfg(
       func=mdp.joint_vel_rel,
       noise=Unoise(n_min=-1.5, n_max=1.5),
+      delay_max_lag=1,
     ),
     "actions": ObservationTermCfg(func=mdp.last_action),
     "gait_phase": ObservationTermCfg(
@@ -458,6 +464,8 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
       params=lidar_map_params,
       noise=HeightScanNoiseModelCfg(),
       clip=(-1.0, 1.0),
+      # LiDAR -> mapping -> UDP latency: the map may be up to 3 steps (60 ms) old.
+      delay_max_lag=3,
     ),
   }
 
@@ -550,8 +558,12 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
       func=mdp.reset_root_state_uniform,
       mode="reset",
       params={
-        "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-3.14, 3.14)},
-        "velocity_range": {},
+        "pose_range": {
+          "x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-3.14, 3.14),
+          "roll": (-0.1, 0.1), "pitch": (-0.1, 0.1),  # start slightly tilted
+        },
+        # start moving a little, so the policy learns to take over from any state
+        "velocity_range": {"x": (-0.3, 0.3), "y": (-0.3, 0.3), "yaw": (-0.3, 0.3)},
       },
     ),
     "reset_robot_joints": EventTermCfg(
@@ -612,6 +624,60 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
         "operation": "add",
         "field": "body_ipos",
         "ranges": {0: (-0.05, 0.05), 1: (-0.05, 0.05), 2: (-0.05, 0.05)},
+      },
+    ),
+    ##
+    # Sim-to-real robustness (motor and model uncertainty). Robot-specific names are set
+    # in config/<robot>/env_cfgs.py.
+    ##
+    "pd_gains": EventTermCfg(  # real motors' effective kp/kd differ from the nominal 20/1
+      func=mdp.randomize_pd_gains,
+      mode="reset",
+      model_fields=("actuator_gainprm", "actuator_biasprm"),
+      params={"kp_range": (0.85, 1.15), "kd_range": (0.8, 1.2), "operation": "scale"},
+    ),
+    "effort_limits": EventTermCfg(  # weaker motors (heat, battery voltage)
+      func=mdp.randomize_effort_limits,
+      mode="reset",
+      model_fields=("actuator_forcerange",),
+      params={"effort_limit_range": (0.85, 1.0), "operation": "scale"},
+    ),
+    "actuator_delay": EventTermCfg(  # command latency in 5 ms physics steps: 0-20 ms
+      func=mdp.sync_actuator_delays,
+      mode="reset",
+      params={"lag_range": (0, 4)},
+    ),
+    "link_mass": EventTermCfg(  # leg link masses +-10 %
+      mode="startup",
+      func=mdp.randomize_field,
+      domain_randomization=True,
+      params={
+        "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
+        "operation": "scale",
+        "field": "body_mass",
+        "ranges": (0.9, 1.1),
+      },
+    ),
+    "joint_friction": EventTermCfg(  # joint friction loss 0-0.2 Nm (nominal model has 0)
+      mode="startup",
+      func=mdp.randomize_field,
+      domain_randomization=True,
+      params={
+        "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+        "operation": "abs",
+        "field": "dof_frictionloss",
+        "ranges": (0.0, 0.2),
+      },
+    ),
+    "joint_armature": EventTermCfg(  # rotor inertia x0.8..x1.2
+      mode="startup",
+      func=mdp.randomize_field,
+      domain_randomization=True,
+      params={
+        "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+        "operation": "scale",
+        "field": "dof_armature",
+        "ranges": (0.8, 1.2),
       },
     ),
     "encoder_bias": EventTermCfg(

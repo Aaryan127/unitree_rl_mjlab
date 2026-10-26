@@ -62,6 +62,12 @@ class EventTermCfg(ManagerTermBaseCfg):
   from ``params["field"]`` is tracked and exposed via
   ``EventManager.domain_randomization_fields`` for logging/debugging."""
 
+  model_fields: tuple[str, ...] = ()
+  """Extra model fields this event writes per environment (e.g. ``actuator_gainprm``
+  for PD-gain randomization). They are expanded to one copy per env, like
+  ``params["field"]`` of a domain randomization term; otherwise every env shares one
+  value and per-env writes have no effect."""
+
 
 class EventManager(ManagerBase):
   """Manages event-based operations for the environment.
@@ -271,5 +277,8 @@ class EventManager(ManagerBase):
 
       if term_cfg.domain_randomization:
         field_name = term_cfg.params["field"]
+        if field_name not in self._domain_randomization_fields:
+          self._domain_randomization_fields.append(field_name)
+      for field_name in term_cfg.model_fields:
         if field_name not in self._domain_randomization_fields:
           self._domain_randomization_fields.append(field_name)

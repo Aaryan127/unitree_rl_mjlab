@@ -104,6 +104,16 @@ Deployed observation vector (153) = `policy` (54) + `height_noisy` (99), in that
 - No `ipdb` / prints inside managers; debugging goes through `scripts/debug_env.py`.
 - No merge-conflict markers; stock G1/H1/Go2 tasks still register and train.
 
+## Sim-to-real robustness (added)
+
+- Actuator command delay 0-20 ms (`DelayedActuatorCfg`), per-robot kp/kd, torque limits,
+  link masses, joint friction and armature; IMU/joint observation delay 0-20 ms, LiDAR map
+  delay 0-60 ms; tilted/moving resets. Details: CODE_GUIDE 4.10.
+- `EventTermCfg.model_fields` expands extra model fields per robot (fixes PD-gain and
+  effort randomization silently being identical for every robot).
+- `randomize_effort_limits` unwraps `DelayedActuator` like `randomize_pd_gains`.
+- `check_lidar_map.py` disables the map delay so bridge and training compare the same frame.
+
 ## Open items / known limitations
 
 - **Real height map**: `scripts/lidar_height_map.py` converts a ROS 2 PointCloud2 and TF

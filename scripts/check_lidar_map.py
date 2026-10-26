@@ -44,6 +44,7 @@ def main(num_envs: int = 32) -> None:
   cfg.scene.num_envs = num_envs
   term = cfg.observations["height_noisy"].terms["height_scan"]
   term.params["point_noise_std"] = 0.0  # compare geometry, not random noise
+  term.delay_max_lag = 0  # compare the same frame (training delays the map 0-3 steps)
   lp = term.params
   params = {
     "num_points": 99, "size_x": lp["size_x"], "size_y": lp["size_y"],
