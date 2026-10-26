@@ -27,6 +27,8 @@ import numpy as np
 import tyro
 import yaml
 
+from height_map_grid import make_grid
+
 
 @dataclass
 class SenderConfig:
@@ -40,15 +42,6 @@ class SenderConfig:
   rate: float = 20.0
   duration: float = 0.0
   """Seconds to send (0 = forever)."""
-
-
-def make_grid(params: dict) -> tuple[np.ndarray, np.ndarray]:
-  """x, y coordinates of the rays in the same order as GridPatternCfg.generate_rays."""
-  res = params["resolution"]
-  x = np.arange(-params["size_x"] / 2, params["size_x"] / 2 + res * 0.5, res)
-  y = np.arange(-params["size_y"] / 2, params["size_y"] / 2 + res * 0.5, res)
-  grid_x, grid_y = np.meshgrid(x, y, indexing="xy")
-  return grid_x.flatten(), grid_y.flatten()
 
 
 def make_map(cfg: SenderConfig, x: np.ndarray) -> np.ndarray:

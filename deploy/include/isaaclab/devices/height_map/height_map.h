@@ -11,6 +11,7 @@
 // sends it as one UDP datagram of num_points float32 values (little endian) to
 // udp_port on the machine running the controller, at >= 10 Hz.
 // See scripts/send_height_map.py for a test sender.
+// scripts/lidar_height_map.py converts a ROS 2 PointCloud2 into this packet.
 //
 // Consumer: the `height_scan` observation. If no map was received, the map has the wrong
 // size, or it is older than `timeout` seconds, all zeros are returned. The student was
@@ -25,6 +26,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <iostream>
 #include <mutex>
@@ -56,7 +58,15 @@ public:
     {
         std::lock_guard<std::mutex> lock(mtx_);
         const float age = std::chrono::duration<float>(std::chrono::steady_clock::now() - stamp_).count();
-        const bool ok = received_ && values_.size() == n && age <= timeout_s;
+        bool ok = received_ && values_.size() == n && age <= timeout_s;
+        if (ok) {
+            for (float value : values_) {
+                if (!std::isfinite(value) || value < -1.0f || value > 1.0f) {
+                    ok = false;
+                    break;
+                }
+            }
+        }
         if (ok != last_ok_) {
             if (ok) std::cout << "[HeightMap] receiving height map (" << n << " points)." << std::endl;
             else    std::cout << "[HeightMap] no valid height map (received=" << received_ << ", size="

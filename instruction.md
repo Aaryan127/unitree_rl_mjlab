@@ -129,8 +129,40 @@ trained on, so it walks as a blind policy. Test the link with synthetic maps:
 python scripts/send_height_map.py --mode flat --host <controller ip>
 python scripts/send_height_map.py --mode step --step-height 0.1 --host <controller ip>
 ```
-For real terrain, an elevation-mapping node (from the Go2 LiDAR) must fill the same grid
-and send it the same way; that node is not part of this repo yet (see updates.md).
+For live terrain, run the ROS 2 bridge `scripts/lidar_height_map.py` on a computer that receives
+the Go2 LiDAR point cloud (`sensor_msgs/PointCloud2`) and the robot pose. It builds the same
+11 x 9 map the policy was trained on and sends it to the controller over UDP. The LiDAR driver
+and the robot odometry/localization must already be running; this repository does not install or
+configure those.
+
+```bash
+# In a ROS 2 Python environment with numpy and PyYAML:
+ros2 topic list                       # find the cloud topic and an odometry topic
+ros2 topic info <cloud topic>         # check its frame_id with: ros2 topic echo <topic> --once
+# robot pose from an odometry topic (works without a TF tree):
+python3 scripts/lidar_height_map.py --cloud-topic <cloud topic> \
+  --pose-source odom --odom-topic <odometry topic> --world-frame odom --host <controller-ip>
+# or robot pose from TF (world -> base_link):
+python3 scripts/lidar_height_map.py --cloud-topic <cloud topic> \
+  --pose-source tf --world-frame odom --base-frame base_link --host <controller-ip>
+```
+How it works and what to tune:
+- **Frames.** If the cloud's `frame_id` equals `--world-frame` (e.g. a deskewed cloud already in
+  `odom`) it is used directly; otherwise it is transformed with TF. Use a deskewed (motion-
+  compensated) cloud for stairs.
+- **Accumulation.** The last `--accumulate-time` seconds (0.4) of clouds are kept in the world
+  frame and the grid is sampled around the robot's **latest** pose, so a sparse LiDAR still covers
+  the grid and robot motion since the scan is accounted for.
+- **Coverage.** A map is only sent if `--min-coverage` (0.5) of the 99 cells have data; otherwise
+  nothing is sent and after 0.2 s the controller gives the student zeros (its trained "no map"
+  input). Unseen cells inside a sent map are 0.
+- **Heights.** Points from 90 cm below to 45 cm above the base are used (stair tops ahead can be
+  level with the base); the robot's own trunk is removed by a small box
+  (`--body-x/--body-y/--body-min-z`).
+- **Clocks.** Clouds older than `--max-cloud-age` (0.15 s) are dropped. If the LiDAR and this
+  computer are not time-synced, add `--use-receive-time True`.
+- Check the bridge warnings and the controller's `[HeightMap]` messages before walking with
+  perception; test the link first with `scripts/send_height_map.py`.
 
 ## 6. What each file does
 
@@ -161,6 +193,8 @@ Training (Python):
 | `mjlab/tasks/velocity/mdp/curriculums.py` | `reward_weight_ramp`: regularization curriculum. |
 | `scripts/export_deploy.py` | ONNX + deploy.yaml export and verification. |
 | `scripts/send_height_map.py` | Test sender for the robot's height map link. |
+| `scripts/lidar_height_map.py` | ROS 2 point-cloud bridge: TF into the gravity frame, sample the training grid, validate coverage, send UDP. |
+| `scripts/height_map_grid.py` | Shared grid layout for the test sender and LiDAR bridge. |
 
 Deployment (C++):
 

@@ -21,7 +21,16 @@ How to use the branch and what each file does: see [instruction.md](instruction.
 - [ ] Play both in simulation; check stairs success per terrain level
 - [ ] Build `go2_ctrl` on the robot (needs unitree_sdk2 + cyclonedds; not buildable on the dev laptop)
 - [ ] Real robot: blind test on flat ground first (no height map -> zeros)
-- [ ] Elevation-mapping bridge: LiDAR -> robot-centric 11 x 9 grid -> UDP (see open items)
+- [x] ROS 2 PointCloud2 bridge: LiDAR points -> robot-centric 11 x 9 grid -> UDP
+- [ ] Confirm LiDAR topic, TF, coverage, and timing on the physical Go2
+
+## 2026-10-26: LiDAR height-map bridge checked and hardened
+- Bridge output equals the simulator's `height_scan` (0.000 m) on platforms and in front of
+  rising stairs (fixed: max_z cut removed stair tops; trunk self-filter box instead).
+- Rolling 0.4 s point buffer in the world frame, sampled at the latest pose; min coverage 0.5;
+  pose from TF or a nav_msgs/Odometry topic; `--use-receive-time` for unsynced clocks.
+- 9 unit tests (tests/test_lidar_height_map.py); ROS node logic exercised with fake ROS modules.
+- Still to do on the robot: real topic/frame names, deskewing, coverage and latency.
 
 ## 2026-10-22: debugging and tuning features from the cpu branch, done safely
 - Opt-in debug mode `mjlab/utils/debug.py` (MJLAB_DEBUG / MJLAB_DEBUG_NAN / MJLAB_BREAK), one guarded
@@ -87,11 +96,10 @@ Deployed observation vector (153) = `policy` (54) + `height_noisy` (99), in that
 
 ## Open items / known limitations
 
-- **Real height map**: the C++ side and the UDP protocol exist, but nothing on the robot
-  produces the map yet. Needs an elevation-mapping pipeline from the Go2 EDU LiDAR
-  (e.g. a ROS 2 elevation_mapping node) and a small bridge that samples the 11 x 9 grid in
-  the base yaw frame and sends it (format in `height_map.h`, example in `scripts/send_height_map.py`).
-  Until then the robot runs the student blind.
+- **Real height map**: `scripts/lidar_height_map.py` converts a ROS 2 PointCloud2 and TF
+  into the 11 x 9 UDP map. The Go2 LiDAR driver, localization/TF publisher, real topic and
+  frame names, and live sensor tuning must be supplied and checked on the robot. If the
+  cloud is stale or too sparse, the bridge stops sending and the student runs blind.
 - **CPU speed**: ~15 env-steps/s on the full stairs terrain (4100 box geoms + 99 rays per
   robot). Use `debug_env.py` (small terrain) on CPU; train on the GPU.
 - Reward weights are untested beyond short CPU runs; expect to tune on GPU
