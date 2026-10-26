@@ -24,6 +24,16 @@ How to use the branch and what each file does: see [instruction.md](instruction.
 - [x] ROS 2 PointCloud2 bridge: LiDAR points -> robot-centric 11 x 9 grid -> UDP
 - [ ] Confirm LiDAR topic, TF, coverage, and timing on the physical Go2
 
+## 2026-10-26: student trained on a simulated-LiDAR map, identical to the robot bridge
+- `LidarPatternCfg` (raycast_sensor.py): head-mounted spinning-LiDAR beams (1440 rays), tilting
+  with the body. `mdp.lidar_height_map` builds the student's map from them with the bridge's
+  gridding (nearest cell, 20 % lowest point, >= 2 points, "no map" below 50 % coverage).
+- Bridge switched to the same gridding; settings exported in deploy.yaml (`lidar_map`) and
+  loaded by the bridge. `scripts/check_lidar_map.py`: bridge == training map (0.0 m) on 32
+  robots standing and moving; LiDAR covers ~80 % of the grid, blind spots behind the robot.
+- Teacher/critic keep the clean ray-cast map (privileged). LiDAR mount position/tilt are an
+  approximation: set them from the real robot's TF.
+
 ## 2026-10-26: LiDAR height-map bridge checked and hardened
 - Bridge output equals the simulator's `height_scan` (0.000 m) on platforms and in front of
   rising stairs (fixed: max_z cut removed stair tops; trunk self-filter box instead).

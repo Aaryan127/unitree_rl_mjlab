@@ -353,7 +353,51 @@ class PinholeCameraPatternCfg:
     return local_offsets, local_directions
 
 
-PatternCfg = GridPatternCfg | PinholeCameraPatternCfg
+@dataclass
+class LidarPatternCfg:
+  """Spinning-LiDAR pattern: rays from one mount point over azimuth x elevation.
+
+  All rays start at `mount_pos` (frame-local) and point outwards in rings. Use with
+  ray_alignment="base" so the beams tilt with the body like a body-mounted LiDAR.
+  Elevations are in degrees above the sensor's horizontal plane (negative = down);
+  `pitch_deg` tilts the whole sensor nose-down (positive) about the frame's y axis.
+  """
+
+  mount_pos: tuple[float, float, float] = (0.28, 0.0, 0.03)
+  azimuth_res_deg: float = 4.0
+  """Horizontal angle between rays (full 360 degrees)."""
+  elevation_range_deg: tuple[float, float] = (-80.0, -10.0)
+  num_rings: int = 16
+  """Number of elevation rings, evenly spaced over elevation_range_deg."""
+  pitch_deg: float = 0.0
+
+  def generate_rays(
+    self, mj_model: mujoco.MjModel | None, device: str
+  ) -> tuple[torch.Tensor, torch.Tensor]:
+    del mj_model  # Unused.
+    az = torch.deg2rad(
+      torch.arange(0.0, 360.0, self.azimuth_res_deg, device=device, dtype=torch.float32)
+    )
+    el = torch.deg2rad(
+      torch.linspace(*self.elevation_range_deg, self.num_rings, device=device)
+    )
+    el_grid, az_grid = torch.meshgrid(el, az, indexing="ij")
+    el_f, az_f = el_grid.flatten(), az_grid.flatten()
+    dirs = torch.stack(
+      [torch.cos(el_f) * torch.cos(az_f), torch.cos(el_f) * torch.sin(az_f), torch.sin(el_f)],
+      dim=1,
+    )
+    p = math.radians(self.pitch_deg)  # nose-down tilt about y
+    rot = torch.tensor(
+      [[math.cos(p), 0.0, math.sin(p)], [0.0, 1.0, 0.0], [-math.sin(p), 0.0, math.cos(p)]],
+      device=device,
+    )
+    dirs = dirs @ rot.T
+    offsets = torch.tensor(self.mount_pos, device=device, dtype=torch.float32).expand_as(dirs).clone()
+    return offsets, dirs
+
+
+PatternCfg = GridPatternCfg | PinholeCameraPatternCfg | LidarPatternCfg
 
 
 @dataclass

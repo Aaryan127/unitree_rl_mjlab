@@ -129,6 +129,15 @@ trained on, so it walks as a blind policy. Test the link with synthetic maps:
 python scripts/send_height_map.py --mode flat --host <controller ip>
 python scripts/send_height_map.py --mode step --step-height 0.1 --host <controller ip>
 ```
+**The student is trained on a LiDAR-built map.** In simulation a head-mounted LiDAR
+(`lidar` sensor, `LidarPatternCfg`) is ray-cast and its points are turned into the 11 x 9 map
+by `mdp.lidar_height_map`, with exactly the gridding the robot's bridge uses (so the student
+learns the real sensor's blind spots and ring gaps). `scripts/export_deploy.py` writes those
+settings into `deploy.yaml` (`height_scan.params.lidar_map`) and the bridge loads them, so the
+robot builds the map exactly as in training. `python scripts/check_lidar_map.py` proves it
+(bridge vs training map, coverage, blind spots); rerun it after changing the LiDAR mount
+(`mount_pos`, `pitch_deg` in `config/go2/env_cfgs.py`: match your robot's base_link -> lidar TF).
+
 For live terrain, run the ROS 2 bridge `scripts/lidar_height_map.py` on a computer that receives
 the Go2 LiDAR point cloud (`sensor_msgs/PointCloud2`) and the robot pose. It builds the same
 11 x 9 map the policy was trained on and sends it to the controller over UDP. The LiDAR driver
@@ -194,6 +203,7 @@ Training (Python):
 | `scripts/export_deploy.py` | ONNX + deploy.yaml export and verification. |
 | `scripts/send_height_map.py` | Test sender for the robot's height map link. |
 | `scripts/lidar_height_map.py` | ROS 2 point-cloud bridge: TF into the gravity frame, sample the training grid, validate coverage, send UDP. |
+| `scripts/check_lidar_map.py` | Proves the robot bridge builds the same LiDAR map as training; shows coverage and blind spots. |
 | `scripts/height_map_grid.py` | Shared grid layout for the test sender and LiDAR bridge. |
 
 Deployment (C++):

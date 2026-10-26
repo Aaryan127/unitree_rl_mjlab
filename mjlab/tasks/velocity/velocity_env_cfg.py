@@ -430,10 +430,32 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
   height_terms = {
     "height_scan": ObservationTermCfg(func=mdp.height_scan, params=height_params),
   }
+  # The student's map is built from a simulated LiDAR with the robot bridge's exact
+  # gridding (scripts/lidar_height_map.py), then corrupted further by the noise model
+  # (drift, outliers, shift, dropouts). These settings are exported to deploy.yaml and
+  # used by the bridge on the robot. To train on the ideal ray-cast map instead, set
+  # func=mdp.height_scan, params=height_params.
+  lidar_map_params = {
+    "sensor_name": "lidar",
+    "size_x": 1.0,
+    "size_y": 0.8,
+    "resolution": 0.1,
+    "base_height": 0.25,
+    "min_z": -0.9,
+    "max_z": 0.45,
+    "body_x": 0.30,
+    "body_y": 0.15,
+    "body_min_z": -0.10,
+    "cell_radius": 0.075,
+    "min_points": 2,
+    "quantile": 0.2,
+    "min_coverage": 0.5,
+    "point_noise_std": 0.01,
+  }
   height_noisy_terms = {
     "height_scan": ObservationTermCfg(
-      func=mdp.height_scan,
-      params=height_params,
+      func=mdp.lidar_height_map,
+      params=lidar_map_params,
       noise=HeightScanNoiseModelCfg(),
       clip=(-1.0, 1.0),
     ),

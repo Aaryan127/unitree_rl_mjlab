@@ -10,7 +10,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from lidar_height_map import (  # noqa: E402
-  IDENTITY, BridgeConfig, PointBuffer, points_to_world, sample_grid, terrain_observation,
+  IDENTITY, BridgeConfig, PointBuffer, apply_training_settings, points_to_world, sample_grid,
+  terrain_observation,
 )
 from send_height_map import make_grid  # noqa: E402
 
@@ -116,6 +117,16 @@ class HeightMapTests(unittest.TestCase):
     on_step = (moved_x >= 0.35) & (moved_x <= 0.5 + 1e-6)   # inside the scanned area
     np.testing.assert_allclose(values[on_step], -0.1, atol=1e-6)
     np.testing.assert_allclose(values[moved_x < 0.35], 0.0, atol=1e-6)
+
+  def test_training_settings_loaded_from_deploy_yaml(self):
+    params = dict(PARAMS, lidar_map={"max_z": 0.4, "min_points": 3, "quantile": 0.1,
+                                     "min_coverage": 0.6})
+    cfg = apply_training_settings(BridgeConfig(), params)
+    self.assertEqual((cfg.max_z, cfg.min_points_per_cell, cfg.quantile, cfg.min_coverage),
+                     (0.4, 3, 0.1, 0.6))
+    # A value given on the command line (different from the default) wins.
+    cfg = apply_training_settings(BridgeConfig(min_coverage=0.3), params)
+    self.assertEqual(cfg.min_coverage, 0.3)
 
   def test_missing_and_invalid_points(self):
     points = self.cloud(np.zeros(99))[:40]

@@ -15,6 +15,7 @@ from mjlab.sensor import (
   ContactMatch,
   ContactSensorCfg,
   GridPatternCfg,
+  LidarPatternCfg,
   ObjRef,
   RayCastSensorCfg,
 )
@@ -212,11 +213,31 @@ def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     include_geom_groups=(0,),
     debug_vis=play,
   )
+  # Simulated head LiDAR for the student's height map (see mdp.lidar_height_map).
+  # Beams start at the mount point and tilt with the body (ray_alignment="base"), so the
+  # map has the real sensor's blind spots and ring gaps. Mount position / tilt are an
+  # approximation of the Go2 EDU head LiDAR: check them against your robot's TF
+  # (base_link -> lidar frame) and update mount_pos / pitch_deg to match.
+  lidar_cfg = RayCastSensorCfg(
+    name="lidar",
+    frame=ObjRef(type="body", name="base_link", entity="robot"),
+    pattern=LidarPatternCfg(
+      mount_pos=(0.28, 0.0, 0.03),
+      azimuth_res_deg=4.0,
+      elevation_range_deg=(-80.0, -10.0),
+      num_rings=16,
+      pitch_deg=0.0,
+    ),
+    ray_alignment="base",
+    max_distance=5.0,
+    include_geom_groups=(0,),
+  )
   cfg.scene.sensors = (
     feet_ground_cfg,
     feet_normals_cfg,
     leg_ground_cfg,
     height_scanner_cfg,
+    lidar_cfg,
   )
 
   if cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:

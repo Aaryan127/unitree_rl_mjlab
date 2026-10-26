@@ -131,6 +131,17 @@ def build_deploy_yaml(env: ManagerBasedRlEnv, cfg: ExportConfig) -> dict:
     num_rays,
   )
 
+  # Map-building settings of the student's LiDAR map (mdp.lidar_height_map), so the robot's
+  # bridge (scripts/lidar_height_map.py) builds the map exactly as in training.
+  height_term = obs_manager.get_term_cfg("height_noisy", "height_scan")
+  if getattr(height_term.func, "__name__", "") == "lidar_height_map":
+    p = height_term.params
+    observations["height_scan"]["params"]["lidar_map"] = {
+      k: float(p[k]) if k != "min_points" else int(p[k])
+      for k in ("min_z", "max_z", "body_x", "body_y", "body_min_z", "cell_radius",
+                "min_points", "quantile", "min_coverage")
+    }
+
   return {
     "joint_ids_map": joint_ids_map,
     "step_dt": float(env.step_dt),

@@ -35,6 +35,17 @@ import yaml
 from height_map_grid import make_grid
 
 
+# Map-building settings that training also uses: exported by scripts/export_deploy.py into
+# deploy.yaml (observations.height_scan.params.lidar_map) and loaded from there, so the robot
+# builds the map exactly like the student saw it in simulation. Command-line values that
+# differ from the defaults below override the file.
+_SHARED = {
+  "min_z": "min_z", "max_z": "max_z", "body_x": "body_x", "body_y": "body_y",
+  "body_min_z": "body_min_z", "cell_radius": "cell_radius",
+  "min_points": "min_points_per_cell", "quantile": "quantile", "min_coverage": "min_coverage",
+}
+
+
 @dataclass
 class BridgeConfig:
   deploy_yaml: str = "deploy/robots/go2/config/policy/pgtt/v0/params/deploy.yaml"
@@ -63,6 +74,8 @@ class BridgeConfig:
   cell_radius: float = 0.075
   """Only use points this close to a grid sample; avoid smearing stair edges."""
   min_points_per_cell: int = 2
+  quantile: float = 0.2
+  """Ground height of a cell = this quantile (lower index) of its points' heights."""
   min_coverage: float = 0.5
   """Minimum fraction of observed grid cells before sending a map. The student was
   trained with ~5 % missing cells (or whole maps missing), not with half-empty maps."""
@@ -113,39 +126,47 @@ def sample_grid(
 ) -> tuple[np.ndarray, float]:
   """Return (float32 observations, observed-cell fraction) around the base pose.
 
-  Grid XY axes follow base yaw, while height uses world Z, matching the simulator's
-  yaw-aligned rays and base-Z-relative observation. Unobserved cells are 0.
+  Identical to training (mjlab/tasks/velocity/mdp/observations.py::
+  grid_height_map_from_points): each point goes to its nearest grid cell (grid
+  yaw-aligned with the base, y outer / x inner), a cell's ground is the `quantile`
+  lowest point (lower index), cells with < min_points_per_cell points are 0. The
+  min-coverage rule ("send nothing") is applied by the caller.
   """
   base_rot = quaternion_matrix(base_transform.rotation)
   relative = world_points - _translation(base_transform)
   yaw = np.arctan2(base_rot[1, 0], base_rot[0, 0])
   c, s = np.cos(yaw), np.sin(yaw)
-  local_x = c * relative[:, 0] + s * relative[:, 1]
-  local_y = -s * relative[:, 0] + c * relative[:, 1]
+  lx = c * relative[:, 0] + s * relative[:, 1]
+  ly = -s * relative[:, 0] + c * relative[:, 1]
   z = relative[:, 2]
-  grid_x, grid_y = make_grid(params)
-  if len(grid_x) != int(params["num_points"]):
+  size_x, size_y, res = float(params["size_x"]), float(params["size_y"]), float(params["resolution"])
+  nx, ny = int(round(size_x / res)) + 1, int(round(size_y / res)) + 1
+  m = nx * ny
+  if m != int(params["num_points"]):
     raise ValueError("Grid dimensions disagree with exported num_points")
 
-  valid = (z >= cfg.min_z) & (z <= cfg.max_z)
-  valid &= np.abs(local_x) <= float(params["size_x"]) / 2 + cfg.cell_radius
-  valid &= np.abs(local_y) <= float(params["size_y"]) / 2 + cfg.cell_radius
-  on_body = (np.abs(local_x) <= cfg.body_x) & (np.abs(local_y) <= cfg.body_y) & (z >= cfg.body_min_z)
-  valid &= ~on_body
-
-  values = np.zeros(grid_x.size, dtype=np.float32)
-  observed = np.zeros(grid_x.size, dtype=bool)
-  radius_sq = cfg.cell_radius ** 2
-  x, y, z = local_x[valid], local_y[valid], z[valid]
-  for i, (gx, gy) in enumerate(zip(grid_x, grid_y)):
-    in_cell = (x-gx)**2 + (y-gy)**2 <= radius_sq
-    if np.count_nonzero(in_cell) < cfg.min_points_per_cell:
-      continue
-    # A low quantile rejects tall vegetation and obstacle returns, while
-    # resisting one very low outlier better than the minimum does.
-    ground_z = np.quantile(z[in_cell], 0.2)
+  ix = np.round((lx + size_x / 2) / res)
+  iy = np.round((ly + size_y / 2) / res)
+  d2 = (lx - (ix * res - size_x / 2)) ** 2 + (ly - (iy * res - size_y / 2)) ** 2
+  on_body = (np.abs(lx) <= cfg.body_x) & (np.abs(ly) <= cfg.body_y) & (z >= cfg.body_min_z)
+  ok = (
+    (z >= cfg.min_z) & (z <= cfg.max_z)
+    & (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny)
+    & (d2 <= cfg.cell_radius ** 2)
+    & ~on_body
+  )
+  cell = (iy[ok] * nx + ix[ok]).astype(np.int64)
+  z_ok = z[ok]
+  order = np.lexsort((z_ok, cell))  # sort by cell, then height
+  cell, z_ok = cell[order], z_ok[order]
+  counts = np.bincount(cell, minlength=m)[:m]
+  starts = np.cumsum(counts) - counts
+  values = np.zeros(m, dtype=np.float32)
+  observed = counts >= cfg.min_points_per_cell
+  k = np.floor(cfg.quantile * np.maximum(counts - 1, 0)).astype(np.int64)
+  for i in np.nonzero(observed)[0]:
+    ground_z = z_ok[starts[i] + k[i]]
     values[i] = np.clip(-ground_z - float(params["base_height"]), -1.0, 1.0)
-    observed[i] = True
   return values, float(observed.mean())
 
 
@@ -196,15 +217,31 @@ def _odom_to_transform(msg):
   return SimpleNamespace(translation=SimpleNamespace(x=p.x, y=p.y, z=p.z), rotation=q)
 
 
+def apply_training_settings(cfg: BridgeConfig, params: dict) -> BridgeConfig:
+  """Use the map settings training used (deploy.yaml) unless overridden on the command line."""
+  from dataclasses import replace
+
+  trained = params.get("lidar_map", {})
+  defaults = BridgeConfig()
+  updates = {}
+  for yaml_key, field_name in _SHARED.items():
+    if yaml_key in trained and getattr(cfg, field_name) == getattr(defaults, field_name):
+      updates[field_name] = type(getattr(defaults, field_name))(trained[yaml_key])
+  if not trained:
+    print("[lidar_height_map] deploy.yaml has no lidar_map settings (old export?): using defaults")
+  return replace(cfg, **updates)
+
+
 def main(cfg: BridgeConfig) -> None:
+  with open(cfg.deploy_yaml, encoding="utf-8") as f:
+    params = yaml.safe_load(f)["observations"]["height_scan"]["params"]
+  cfg = apply_training_settings(cfg, params)
   if cfg.min_points_per_cell < 1 or cfg.cell_radius <= 0 or cfg.max_rate <= 0:
     raise ValueError("Cell count, radius and rate must be positive")
   if not 0 <= cfg.min_coverage <= 1 or cfg.min_z >= cfg.max_z:
     raise ValueError("Invalid coverage or ground-height range")
   if cfg.pose_source not in ("tf", "odom"):
     raise ValueError("pose_source must be 'tf' or 'odom'")
-  with open(cfg.deploy_yaml, encoding="utf-8") as f:
-    params = yaml.safe_load(f)["observations"]["height_scan"]["params"]
   if cfg.max_cloud_age >= float(params["timeout"]):
     raise ValueError("max_cloud_age must be below the controller map timeout")
 
