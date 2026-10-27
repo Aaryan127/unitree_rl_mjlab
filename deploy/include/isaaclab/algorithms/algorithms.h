@@ -5,6 +5,9 @@
 
 #include "onnxruntime_cxx_api.h"
 #include <cstring>
+#include <cmath>
+#include <algorithm>
+#include <stdexcept>
 #include <iostream>
 #include <mutex>
 #include <string>
@@ -82,6 +85,8 @@ public:
             const auto out = in.substr(0, in.size() - 3) + "_out";
             for (size_t j = 0; j < output_names_str.size(); ++j) {
                 if (output_names_str[j] == out) {
+                    if (numel(output_shapes[j]) != input_sizes[i])
+                        throw std::runtime_error("Recurrent ONNX state sizes do not match: " + in);
                     state_pairs.push_back({i, j});
                     states[i] = std::vector<float>(input_sizes[i], 0.0f);
                 }
@@ -100,6 +105,7 @@ public:
 
     std::vector<float> act(std::unordered_map<std::string, std::vector<float>> obs) override
     {
+        std::lock_guard<std::mutex> lock(act_mtx_);
         auto memory_info = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
 
         std::vector<Ort::Value> input_tensors;
@@ -120,6 +126,8 @@ public:
                     + " values, the model expects " + std::to_string(input_sizes[i])
                     + ". Check the observation list in deploy.yaml.");
             }
+            for (float value : *data)
+                if (!std::isfinite(value)) throw std::runtime_error("Non-finite ONNX input");
             input_tensors.push_back(Ort::Value::CreateTensor<float>(
                 memory_info, data->data(), data->size(), input_shapes[i].data(), input_shapes[i].size()));
         }
@@ -127,8 +135,9 @@ public:
         auto outputs = session->Run(Ort::RunOptions{nullptr}, input_names.data(), input_tensors.data(),
                                     input_tensors.size(), output_names.data(), output_names.size());
 
-        std::lock_guard<std::mutex> lock(act_mtx_);
         const float* act_data = outputs[action_output].GetTensorMutableData<float>();
+        for (size_t i = 0; i < action.size(); ++i)
+            if (!std::isfinite(act_data[i])) throw std::runtime_error("Non-finite ONNX action");
         std::memcpy(action.data(), act_data, action.size() * sizeof(float));
         for (const auto& [in_idx, out_idx] : state_pairs) {
             const float* h = outputs[out_idx].GetTensorMutableData<float>();

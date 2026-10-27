@@ -6,6 +6,7 @@
 #include "isaaclab/envs/manager_based_rl_env.h"
 #include "isaaclab/manager/manager_term_cfg.h"
 #include <numeric>
+#include <cmath>
 
 namespace isaaclab
 {
@@ -77,6 +78,10 @@ public:
 
     void process_action(std::vector<float> action)
     {
+        if (action.size() != static_cast<size_t>(total_action_dim()))
+            throw std::runtime_error("Policy action dimension does not match deploy.yaml");
+        for (float value : action)
+            if (!std::isfinite(value)) throw std::runtime_error("Non-finite policy action");
         _action = action;
         int idx = 0;
         for(auto & term : _terms)

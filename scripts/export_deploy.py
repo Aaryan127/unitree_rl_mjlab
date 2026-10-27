@@ -16,7 +16,10 @@ Usage:
 from __future__ import annotations
 
 import os
-from dataclasses import asdict, dataclass
+import hashlib
+import json
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")  # Export on CPU.
@@ -31,7 +34,7 @@ from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl import RslRlVecEnvWrapper
 from mjlab.rl.exporter_utils import get_base_metadata
 from mjlab.rsl_rl.runners import DistillationRunner
-from mjlab.tasks.registry import load_env_cfg, load_rl_cfg
+from mjlab.utils.checkpoint import checkpoint_configs, nominal_eval_cfg
 
 # Unitree SDK motor order for the Go2 (lowcmd / lowstate index 0..11).
 GO2_SDK_JOINT_ORDER = [
@@ -67,6 +70,7 @@ class ExportConfig:
   """UDP port the controller listens on for height maps (0 = disabled, always zeros)."""
   verify_steps: int = 200
   tolerance: float = 1e-4
+  allow_legacy_config: bool = False
 
 
 def _term_cfg(params: dict, dim: int) -> dict:
@@ -85,13 +89,25 @@ def build_deploy_yaml(env: ManagerBasedRlEnv, cfg: ExportConfig) -> dict:
   for i, sdk_id in enumerate(joint_ids_map):
     stiffness_sdk[sdk_id] = float(meta["joint_stiffness"][i])  # type: ignore[index]
     damping_sdk[sdk_id] = float(meta["joint_damping"][i])  # type: ignore[index]
-  default_pos = [round(float(x), 4) for x in meta["default_joint_pos"]]  # type: ignore[union-attr]
+  default_pos = [float(x) for x in meta["default_joint_pos"]]  # type: ignore[union-attr]
+  joint_action = env.action_manager.get_term("joint_pos")
+  if joint_action.target_names != sim_joints:
+    raise ValueError("Export requires actions in robot joint order")
+  if len(env.action_manager.active_terms) != 1 or joint_action.cfg.clip is not None:
+    raise ValueError("Export supports one unclipped joint-position action term")
+  offset = joint_action.offset
+  action_offset = offset[0].cpu().tolist() if isinstance(offset, torch.Tensor) else [offset] * len(sim_joints)
+  target_clip = None
+  if joint_action.cfg.clip_to_joint_limits:
+    target_clip = robot.data.joint_pos_limits[0, joint_action.target_ids].cpu().tolist()
   action_scale = meta["action_scale"]
   if not isinstance(action_scale, list):
     action_scale = [float(action_scale)] * len(sim_joints)
 
   twist = env.command_manager.get_term_cfg("twist")
   gait = env.command_manager.get_term_cfg("gait")
+  if not gait.frequency_range[0] <= cfg.gait_frequency <= gait.frequency_range[1]:
+    raise ValueError("Deployment gait frequency must lie inside the training range")
 
   # Observation vector = policy group terms, then the student height map.
   obs_manager = env.observation_manager
@@ -110,6 +126,9 @@ def build_deploy_yaml(env: ManagerBasedRlEnv, cfg: ExportConfig) -> dict:
         "frequency": cfg.gait_frequency,
         "offsets": [float(x) for x in gait.leg_offsets],
       }
+    term = obs_manager.get_term_cfg("policy", name)
+    if term.history_length or term.scale is not None or term.clip is not None:
+      raise ValueError(f"Export cannot silently discard history/scale/clip for {name}")
     observations[CPP_OBS_NAMES[name]] = _term_cfg(params, dim)
 
   height_dims = obs_manager.group_obs_term_dim["height_noisy"][0]
@@ -160,10 +179,10 @@ def build_deploy_yaml(env: ManagerBasedRlEnv, cfg: ExportConfig) -> dict:
     },
     "actions": {
       "JointPositionAction": {
-        "clip": None,
+        "clip": target_clip,
         "joint_names": [".*"],
         "scale": [float(s) for s in action_scale],
-        "offset": list(default_pos),
+        "offset": action_offset,
         "joint_ids": None,
       }
     },
@@ -187,40 +206,74 @@ def verify(env: RslRlVecEnvWrapper, policy, onnx_path: Path, cfg: ExportConfig) 
       torch_actions = policy.act_inference(obs)
       flat_obs = torch.cat([obs["policy"], obs["height_noisy"]], dim=-1).cpu().numpy()
       onnx_actions, h = session.run(None, {"obs": flat_obs.astype(np.float32), "h_in": h})
-      max_err = max(max_err, float(np.abs(onnx_actions - torch_actions.cpu().numpy()).max()))
-      obs, _, _, _ = env.step(torch_actions)
+      error = float(np.abs(onnx_actions - torch_actions.cpu().numpy()).max())
+      if not np.isfinite(error):
+        raise RuntimeError("Non-finite policy actions during export verification")
+      max_err = max(max_err, error)
+      obs, _, dones, _ = env.step(torch_actions)
+      policy.reset(dones)
+      h[:, dones.cpu().numpy().astype(bool), :] = 0
   return max_err
 
 
 def main(cfg: ExportConfig) -> None:
+  if cfg.verify_steps < 1 or cfg.tolerance <= 0 or cfg.height_map_timeout <= 0:
+    raise ValueError("Verification steps, tolerance and map timeout must be positive")
+  if not 0 <= cfg.height_map_udp_port <= 65535:
+    raise ValueError("Invalid UDP port")
   out_dir = Path(cfg.output_dir)
-  env_cfg = load_env_cfg(cfg.task, play=True)
+  checkpoint = torch.load(cfg.checkpoint_file, weights_only=False, map_location="cpu")
+  env_cfg, agent_cfg = checkpoint_configs(checkpoint, cfg.task, allow_legacy=cfg.allow_legacy_config)
+  env_cfg = nominal_eval_cfg(env_cfg)
+  if agent_cfg.get("clip_actions") is not None:
+    raise ValueError("Export of wrapper-level raw action clipping is not supported")
   env_cfg.scene.num_envs = 1
+  # Exercise recurrent resets repeatedly as well as ordinary sequential inference.
+  env_cfg.episode_length_s = 0.2
+  # Numerical equivalence does not require building the entire training terrain.
+  from mjlab.tasks.velocity.terrain_profiles import set_terrain_profile
+  set_terrain_profile(env_cfg, "flat")
   env = RslRlVecEnvWrapper(ManagerBasedRlEnv(cfg=env_cfg, device="cpu"))
 
-  agent_cfg = load_rl_cfg(cfg.task)
-  runner = DistillationRunner(env, asdict(agent_cfg), device="cpu")
-  resumed = runner.alg.policy.load_state_dict(
-    torch.load(cfg.checkpoint_file, weights_only=False, map_location="cpu")[
-      "model_state_dict"
-    ]
-  )
+  runner = DistillationRunner(env, agent_cfg, device="cpu")
+  resumed = runner.alg.policy.load_state_dict(checkpoint["model_state_dict"])
   if not resumed:
     raise ValueError("That checkpoint is a teacher. Export a student checkpoint.")
   policy = runner.alg.policy
 
-  policy.export_onnx(str(out_dir / "exported"), "policy.onnx")
   deploy_cfg = build_deploy_yaml(env.unwrapped, cfg)
   obs_dim = sum(len(term["scale"]) for term in deploy_cfg["observations"].values())
   assert obs_dim == policy.student_obs_dim, (obs_dim, policy.student_obs_dim)
 
-  (out_dir / "params").mkdir(parents=True, exist_ok=True)
-  with open(out_dir / "params" / "deploy.yaml", "w") as f:
-    f.write(f"# Generated by scripts/export_deploy.py from {cfg.checkpoint_file}\n")
-    yaml.safe_dump(deploy_cfg, f, sort_keys=False, default_flow_style=None)
-
-  err = verify(env, policy, out_dir / "exported" / "policy.onnx", cfg)
-  env.close()
+  out_dir.parent.mkdir(parents=True, exist_ok=True)
+  try:
+    with tempfile.TemporaryDirectory(prefix="pgtt-export-", dir=out_dir.parent) as temp:
+      staged = Path(temp)
+      policy.export_onnx(str(staged), "policy.onnx")
+      err = verify(env, policy, staged / "policy.onnx", cfg)
+      if err > cfg.tolerance:
+        raise RuntimeError(f"ONNX export mismatch {err:.2e} > {cfg.tolerance}")
+      # Failed verification never replaces the controller's current model/config.
+      (out_dir / "exported").mkdir(parents=True, exist_ok=True)
+      (out_dir / "params").mkdir(parents=True, exist_ok=True)
+      for file in staged.iterdir():
+        os.replace(file, out_dir / "exported" / file.name)
+      yaml_path = staged / "deploy.yaml"
+      with yaml_path.open("w") as f:
+        f.write(f"# Generated from {cfg.checkpoint_file}\n")
+        yaml.safe_dump(deploy_cfg, f, sort_keys=False, default_flow_style=None)
+      os.replace(yaml_path, out_dir / "params" / "deploy.yaml")
+      manifest = {
+        "task": cfg.task, "checkpoint": str(Path(cfg.checkpoint_file).resolve()),
+        "iteration": int(checkpoint.get("iter", -1)),
+        "config_snapshot": "env_cfg" in checkpoint,
+        "numerical_max_action_error": err,
+        "policy_sha256": hashlib.sha256((out_dir / "exported" / "policy.onnx").read_bytes()).hexdigest(),
+        "behavior_validated_on_robot": False,
+      }
+      (out_dir / "export_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+  finally:
+    env.close()
 
   print("\n=== PGTT student export ===")
   print(f"ONNX:        {out_dir / 'exported' / 'policy.onnx'}")
@@ -234,4 +287,4 @@ def main(cfg: ExportConfig) -> None:
 
 
 if __name__ == "__main__":
-  main(tyro.cli(ExportConfig))
+  main(tyro.cli(ExportConfig, config=(tyro.conf.FlagConversionOff,)))

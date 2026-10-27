@@ -1,0 +1,246 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2100" height="3890" viewBox="0 0 2100 3890" role="img" aria-label="PGTT Go2 complete machine learning pipeline">
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9"
+          markerHeight="9" orient="auto-start-reverse">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#74d6cb"/>
+  </marker>
+  <linearGradient id="bg" x2="0" y2="1">
+    <stop offset="0" stop-color="#0a1221"/>
+    <stop offset="1" stop-color="#0e1b2c"/>
+  </linearGradient>
+</defs>
+<rect width="2100" height="3890" fill="url(#bg)"/>
+<text x="75" y="95" fill="#e8efff" font-size="58" font-weight="850" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">PGTT  /  GO2</text>
+<text x="75" y="141" fill="#a9bed8" font-size="28" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Complete task, teacher PPO, student GRU, distillation, and deployment</text>
+<rect x="1640" y="65" width="355" height="38" rx="19" fill="#155b62"/>
+<text x="1817" y="92" fill="#e8efff" font-size="19" font-weight="650" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="middle">ACTUAL CODE CONFIG</text>
+<text x="76" y="185" fill="#9aabc2" font-size="21" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Read top to bottom • blue = simulator/teacher • teal = student/deployment • orange = loss/decision</text>
+<rect x="45" y="215" width="2010" height="710" rx="30" fill="#111d31" stroke="#32445f" stroke-width="2"/>
+<rect x="75" y="240" width="55" height="55" rx="15" fill="#30476c"/>
+<text x="102" y="277" fill="#e8efff" font-size="26" font-weight="800" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="middle">1</text>
+<text x="150" y="275" fill="#e8efff" font-size="35" font-weight="750" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">TASK AND SIMULATION LOOP</text>
+<text x="151" y="309" fill="#a8bbd5" font-size="21" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">What the robot is trying to do, what it observes, and how an action changes the world</text>
+<rect x="80" y="335" width="600" height="300" rx="22" fill="#1a3148" stroke="#467fa2" stroke-width="2"/>
+<text x="104" y="376" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Go2 on mixed terrain</text>
+<text x="104" y="411" fill="#cbd8eb" font-size="22" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">10 × 20 terrain patches, each 8 × 8 m</text>
+<text x="104" y="440" fill="#cbd8eb" font-size="22" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Flat + stairs 1–13 cm; 0.30/0.40 m treads</text>
+<text x="104" y="469" fill="#cbd8eb" font-size="22" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Roughness/waves ≤5 cm; slope ≤0.25</text>
+<text x="104" y="498" fill="#cbd8eb" font-size="22" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">20 s episode; fall if tilt &gt; 90°</text>
+<text x="104" y="527" fill="#cbd8eb" font-size="22" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Physics 0.005 s × 4 = policy 50 Hz</text>
+<text x="104" y="556" fill="#cbd8eb" font-size="22" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Difficulty rises when distance improves</text>
+<rect x="750" y="335" width="600" height="300" rx="22" fill="#21314a" stroke="#697eb0" stroke-width="2"/>
+<text x="774" y="376" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Command and gait clock</text>
+<text x="774" y="411" fill="#cbd8eb" font-size="22" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Target (vx, vy, yaw rate): each in [-1, 1]</text>
+<text x="774" y="440" fill="#cbd8eb" font-size="22" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Velocity command resampled every 8–12 s</text>
+<text x="774" y="469" fill="#cbd8eb" font-size="22" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Trot phase offsets: (0, π, π, 0)</text>
+<text x="774" y="498" fill="#cbd8eb" font-size="22" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Frequency f sampled 1–3 Hz per episode</text>
+<text x="774" y="527" fill="#cbd8eb" font-size="22" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Stance: 0..π; swing: π..2π</text>
+<text x="774" y="556" fill="#cbd8eb" font-size="22" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Policy sees [cos φ ×4, sin φ ×4, f]</text>
+<rect x="1420" y="335" width="600" height="300" rx="22" fill="#193a42" stroke="#3a938e" stroke-width="2"/>
+<text x="1444" y="376" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Action → physics</text>
+<text x="1444" y="411" fill="#cbd8eb" font-size="22" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Network outputs 12 joint values a</text>
+<text x="1444" y="440" fill="#cbd8eb" font-size="22" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Target q = default pose + 0.25 × a</text>
+<text x="1444" y="469" fill="#cbd8eb" font-size="22" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Joint limits clamp targets; PD → torque</text>
+<text x="1444" y="498" fill="#cbd8eb" font-size="22" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">MuJoCo/Warp steps 4 physics frames</text>
+<text x="1444" y="527" fill="#cbd8eb" font-size="22" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Then rewards, done flags, new sensors</text>
+<text x="1444" y="556" fill="#cbd8eb" font-size="22" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Observation/action loop repeats</text>
+<path d="M 680 485 L 745 485" fill="none" stroke="#74d6cb" stroke-width="4" marker-end="url(#arrow)"/>
+<path d="M 1350 485 L 1415 485" fill="none" stroke="#74d6cb" stroke-width="4" marker-end="url(#arrow)"/>
+<rect x="80" y="675" width="940" height="210" rx="22" fill="#202c48" stroke="#667bb0" stroke-width="2"/>
+<text x="104" y="716" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Observation routing</text>
+<text x="104" y="751" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">policy 54 = IMU 3 + gravity 3 + command 3 + joints 24 + last action 12 + gait 9</text>
+<text x="104" y="778" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">history 84 = joint position ×3 + velocity ×2 + action ×2</text>
+<text x="104" y="805" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">height 99 = clean vertical rays; student map 99 = simulated head LiDAR</text>
+<text x="104" y="832" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">privileged 53 = body velocity, contacts, friction, force; critic base 57</text>
+<rect x="1050" y="675" width="970" height="210" rx="22" fill="#3a2d30" stroke="#ae795f" stroke-width="2"/>
+<text x="1074" y="716" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Reward and episode decisions</text>
+<text x="1074" y="751" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">+1.0 velocity XY; +0.5 yaw tracking; +1.0 foot-phase tracking</text>
+<text x="1074" y="778" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">-0.25 swing contact; penalties for tilt, vertical motion, power, limits...</text>
+<text x="1074" y="805" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">r = step_dt × weighted sum; timeout truncates, fall terminates</text>
+<text x="1074" y="832" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Curriculum changes terrain level and ramps regularization penalties</text>
+<rect x="45" y="955" width="2010" height="600" rx="30" fill="#111d31" stroke="#32445f" stroke-width="2"/>
+<rect x="75" y="980" width="55" height="55" rx="15" fill="#30476c"/>
+<text x="102" y="1017" fill="#e8efff" font-size="26" font-weight="800" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="middle">2</text>
+<text x="150" y="1015" fill="#e8efff" font-size="35" font-weight="750" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">STAGE 1 — TEACHER ACTOR–CRITIC</text>
+<text x="151" y="1049" fill="#a8bbd5" font-size="21" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Clean terrain and simulator-only state let PPO discover a good gait</text>
+<rect x="80" y="1080" width="480" height="110" rx="22" fill="#1b314b" stroke="#567db2" stroke-width="2"/>
+<text x="104" y="1121" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Body + history 138</text>
+<text x="104" y="1156" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">policy 54 + history 84 → normalize</text>
+<rect x="80" y="1210" width="480" height="110" rx="22" fill="#1b314b" stroke="#567db2" stroke-width="2"/>
+<text x="104" y="1251" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Clean heights 99</text>
+<text x="104" y="1286" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">99 → 128 → 64 → 32 encoder</text>
+<rect x="80" y="1340" width="480" height="110" rx="22" fill="#1b314b" stroke="#567db2" stroke-width="2"/>
+<text x="104" y="1381" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Privileged state 53</text>
+<text x="104" y="1416" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">normalize → 53 → 64 → 32 → 16</text>
+<rect x="660" y="1110" width="680" height="315" rx="22" fill="#173650" stroke="#4f94c0" stroke-width="2"/>
+<text x="684" y="1151" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Teacher actor / action mean</text>
+<text x="684" y="1186" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Concatenate 138 + 32 + 16 = 186</text>
+<text x="684" y="1215" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">MLP: 186 → 512 → 256 → 128 → 12</text>
+<text x="684" y="1244" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">ELU hidden layers; linear 12-output head</text>
+<text x="684" y="1273" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">During rollout: sample Gaussian action</text>
+<text x="684" y="1302" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Initial action std = 1.0 (learned)</text>
+<text x="684" y="1331" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">At evaluation: use mean action</text>
+<text x="684" y="1360" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Actor ≈ 291k learned parameters</text>
+<path d="M 560 1133 L 652 1200" fill="none" stroke="#74d6cb" stroke-width="4" marker-end="url(#arrow)"/>
+<path d="M 560 1265 L 652 1265" fill="none" stroke="#74d6cb" stroke-width="4" marker-end="url(#arrow)"/>
+<path d="M 560 1395 L 652 1330" fill="none" stroke="#74d6cb" stroke-width="4" marker-end="url(#arrow)"/>
+<rect x="1420" y="1110" width="600" height="315" rx="22" fill="#27314f" stroke="#7791c9" stroke-width="2"/>
+<text x="1444" y="1151" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Critic / value estimate</text>
+<text x="1444" y="1186" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Clean critic 57 + height 99 + priv 53</text>
+<text x="1444" y="1215" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Concatenate = 209 inputs</text>
+<text x="1444" y="1244" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">MLP: 209 → 512 → 256 → 128 → 1</text>
+<text x="1444" y="1273" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Output V(s): expected future return</text>
+<text x="1444" y="1302" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Used to compute PPO advantages</text>
+<text x="1444" y="1331" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Critic is discarded for deployment</text>
+<text x="1444" y="1360" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Critic ≈ 272k learned parameters</text>
+<path d="M 1340 1267 L 1412 1267" fill="none" stroke="#74d6cb" stroke-width="4" marker-end="url(#arrow)"/>
+<text x="80" y="1500" fill="#adbfdb" font-size="21" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Teacher checkpoint stores the actor, critic, learned action noise, and observation-normalizer state.</text>
+<rect x="45" y="1585" width="2010" height="555" rx="30" fill="#111d31" stroke="#32445f" stroke-width="2"/>
+<rect x="75" y="1610" width="55" height="55" rx="15" fill="#30476c"/>
+<text x="102" y="1647" fill="#e8efff" font-size="26" font-weight="800" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="middle">3</text>
+<text x="150" y="1645" fill="#e8efff" font-size="35" font-weight="750" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">TEACHER LEARNING — PPO</text>
+<text x="151" y="1679" fill="#a8bbd5" font-size="21" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">The teacher is the only PGTT policy updated directly from environment reward</text>
+<rect x="80" y="1715" width="450" height="285" rx="22" fill="#19364e" stroke="#4d8cae" stroke-width="2"/>
+<text x="104" y="1756" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">A • collect rollout</text>
+<text x="104" y="1791" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">24 steps per parallel robot</text>
+<text x="104" y="1820" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Store obs, actions, reward, done</text>
+<text x="104" y="1849" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Also V(s), log π(a|s), mean, std</text>
+<text x="104" y="1878" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Sampled teacher actions move Go2</text>
+<text x="104" y="1907" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">One rollout spans 0.48 s of sim time</text>
+<rect x="580" y="1715" width="450" height="285" rx="22" fill="#19364e" stroke="#4d8cae" stroke-width="2"/>
+<text x="604" y="1756" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">B • estimate advantage</text>
+<text x="604" y="1791" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">GAE: γ = 0.99, λ = 0.95</text>
+<text x="604" y="1820" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">δ = r + γV(next) - V(now)</text>
+<text x="604" y="1849" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">A = δ + γλ × later advantage</text>
+<text x="604" y="1878" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Normalize advantages across rollout</text>
+<text x="604" y="1907" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Timeout bootstraps value estimate</text>
+<rect x="1080" y="1715" width="450" height="285" rx="22" fill="#3c3035" stroke="#ad765e" stroke-width="2"/>
+<text x="1104" y="1756" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">C • clipped update</text>
+<text x="1104" y="1791" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">ratio ρ = πnew(a|s) / πold(a|s)</text>
+<text x="1104" y="1820" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Actor minimizes max(-Aρ, -A clip ρ)</text>
+<text x="1104" y="1849" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Critic: clipped value MSE vs return</text>
+<text x="1104" y="1878" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Loss = actor + value - 0.01 entropy</text>
+<text x="1104" y="1907" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Clip range ρ ∈ [0.8, 1.2]</text>
+<rect x="1580" y="1715" width="440" height="285" rx="22" fill="#3c3035" stroke="#ad765e" stroke-width="2"/>
+<text x="1604" y="1756" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">D • optimizer</text>
+<text x="1604" y="1791" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">5 epochs × 4 minibatches</text>
+<text x="1604" y="1820" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Adam, initial LR = 0.001</text>
+<text x="1604" y="1849" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Adaptive LR, desired KL = 0.01</text>
+<text x="1604" y="1878" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Gradient norm limited to 1.0</text>
+<text x="1604" y="1907" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Save teacher checkpoint</text>
+<path d="M 530 1858 L 572 1858" fill="none" stroke="#74d6cb" stroke-width="4" marker-end="url(#arrow)"/>
+<path d="M 1030 1858 L 1072 1858" fill="none" stroke="#74d6cb" stroke-width="4" marker-end="url(#arrow)"/>
+<path d="M 1530 1858 L 1572 1858" fill="none" stroke="#74d6cb" stroke-width="4" marker-end="url(#arrow)"/>
+<text x="80" y="2083" fill="#aebbd0" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Reward shaping: gait phase targets stance contact and a terrain-adaptive swing apex (8 cm + nearby height change, capped at 15 cm).</text>
+<rect x="45" y="2170" width="2010" height="795" rx="30" fill="#111d31" stroke="#32445f" stroke-width="2"/>
+<rect x="75" y="2195" width="55" height="55" rx="15" fill="#30476c"/>
+<text x="102" y="2232" fill="#e8efff" font-size="26" font-weight="800" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="middle">4</text>
+<text x="150" y="2230" fill="#e8efff" font-size="35" font-weight="750" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">STAGE 2 — DEPLOYABLE STUDENT + GRU BELIEF</text>
+<text x="151" y="2264" fill="#a8bbd5" font-size="21" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">The student sees its own sensors and must infer what the privileged teacher knew</text>
+<rect x="80" y="2295" width="455" height="130" rx="22" fill="#164148" stroke="#4caea4" stroke-width="2"/>
+<text x="104" y="2336" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Robot values 54</text>
+<text x="104" y="2371" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Normalize IMU, joints, command,</text>
+<text x="104" y="2400" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">last action, gait phase</text>
+<rect x="80" y="2450" width="455" height="175" rx="22" fill="#164148" stroke="#4caea4" stroke-width="2"/>
+<text x="104" y="2491" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Noisy LiDAR map 99</text>
+<text x="104" y="2526" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">16 rings, -80°..-10°, 4° azimuth</text>
+<text x="104" y="2555" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Returns → 11 × 9 grid (≥50% coverage)</text>
+<text x="104" y="2584" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Noise: drift, holes, outliers, shifts, blind</text>
+<text x="104" y="2613" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Encoder 99 → 128 → 64 → 32</text>
+<rect x="640" y="2300" width="650" height="325" rx="22" fill="#1b3d45" stroke="#5ac4b4" stroke-width="2"/>
+<text x="664" y="2341" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">GRU + gated belief</text>
+<text x="664" y="2376" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Input: normalized body 54 + map latent 32 = 86</text>
+<text x="664" y="2408" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Single-layer GRU; hidden memory h = 256</text>
+<text x="664" y="2440" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Current h and previous h carry recent context</text>
+<text x="664" y="2472" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Height belief 32 = state(h) + sigmoid(gate(h)) × e</text>
+<text x="664" y="2504" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Privileged belief 16 = privileged_state(h)</text>
+<text x="664" y="2536" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Combined inferred belief = 48 values</text>
+<text x="664" y="2568" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Reset h for ended episodes; detach each 24 steps</text>
+<path d="M 535 2360 L 632 2415" fill="none" stroke="#74d6cb" stroke-width="4" marker-end="url(#arrow)"/>
+<path d="M 535 2540 L 632 2505" fill="none" stroke="#74d6cb" stroke-width="4" marker-end="url(#arrow)"/>
+<rect x="1390" y="2300" width="630" height="325" rx="22" fill="#1b3d45" stroke="#5ac4b4" stroke-width="2"/>
+<text x="1414" y="2341" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Student policy</text>
+<text x="1414" y="2376" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Input: normalized body 54 + belief 48 = 102</text>
+<text x="1414" y="2408" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">MLP: 102 → 512 → 256 → 128 → 12</text>
+<text x="1414" y="2440" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Outputs 12 joint-action means</text>
+<text x="1414" y="2472" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Rollout: Gaussian sample, fixed std 0.1</text>
+<text x="1414" y="2504" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Robot/inference: deterministic mean</text>
+<text x="1414" y="2536" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">GRU state flows to the next policy step</text>
+<text x="1414" y="2568" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Deployable network ≈ 573k parameters</text>
+<path d="M 1290 2460 L 1382 2460" fill="none" stroke="#74d6cb" stroke-width="4" marker-end="url(#arrow)"/>
+<rect x="80" y="2670" width="930" height="245" rx="22" fill="#314047" stroke="#8eaa9b" stroke-width="2"/>
+<text x="104" y="2711" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Training-only belief decoder</text>
+<text x="104" y="2746" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">GRU output 256 → reconstructed clean height 99</text>
+<text x="104" y="2775" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">GRU output 256 → reconstructed privileged state 53</text>
+<text x="104" y="2804" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">The clean height target is the teacher's vertical-ray map</text>
+<text x="104" y="2833" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">The privileged target uses the teacher's normalizer</text>
+<text x="104" y="2862" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Decoder is removed from the deployed ONNX graph</text>
+<rect x="1090" y="2670" width="930" height="245" rx="22" fill="#314047" stroke="#8eaa9b" stroke-width="2"/>
+<text x="1114" y="2711" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Why the GRU matters</text>
+<text x="1114" y="2746" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Each step is a 20 ms snapshot; terrain can be occluded or noisy.</text>
+<text x="1114" y="2775" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Memory estimates hidden terrain and pushes from recent motion.</text>
+<text x="1114" y="2804" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">The gate can reduce the influence of an unreliable current map.</text>
+<text x="1114" y="2833" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Input h shape: [1, robots, 256]; output becomes next h.</text>
+<text x="1114" y="2862" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Student training parameters incl. decoder ≈ 651k.</text>
+<rect x="45" y="2995" width="2010" height="430" rx="30" fill="#111d31" stroke="#32445f" stroke-width="2"/>
+<rect x="75" y="3020" width="55" height="55" rx="15" fill="#30476c"/>
+<text x="102" y="3057" fill="#e8efff" font-size="26" font-weight="800" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="middle">5</text>
+<text x="150" y="3055" fill="#e8efff" font-size="35" font-weight="750" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">STUDENT LEARNING — DISTILLATION</text>
+<text x="151" y="3089" fill="#a8bbd5" font-size="21" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Actions are learned from the frozen teacher; reconstruction trains the belief state</text>
+<rect x="80" y="3120" width="450" height="245" rx="22" fill="#263648" stroke="#6c8caa" stroke-width="2"/>
+<text x="104" y="3161" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">A • initialize</text>
+<text x="104" y="3196" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Load latest or specified teacher</text>
+<text x="104" y="3225" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Freeze teacher weights</text>
+<text x="104" y="3254" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Copy teacher height encoder</text>
+<text x="104" y="3283" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">into student's height encoder</text>
+<rect x="580" y="3120" width="450" height="245" rx="22" fill="#1b3d45" stroke="#5ac4b4" stroke-width="2"/>
+<text x="604" y="3161" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">B • student rollout</text>
+<text x="604" y="3196" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Student actions drive simulation</text>
+<text x="604" y="3225" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">At each visited state, teacher</text>
+<text x="604" y="3254" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">labels the action it would take</text>
+<text x="604" y="3283" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Store 24 ordered steps per robot</text>
+<rect x="1080" y="3120" width="450" height="245" rx="22" fill="#3c3035" stroke="#ad765e" stroke-width="2"/>
+<text x="1104" y="3161" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">C • supervised loss</text>
+<text x="1104" y="3196" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">MSE(student a, teacher a)</text>
+<text x="1104" y="3225" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">+ 0.5 × [MSE(clean height)</text>
+<text x="1104" y="3254" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">       + MSE(privileged state)]</text>
+<text x="1104" y="3283" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Rewards are logged, not optimized</text>
+<rect x="1580" y="3120" width="440" height="245" rx="22" fill="#3c3035" stroke="#ad765e" stroke-width="2"/>
+<text x="1604" y="3161" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">D • train memory</text>
+<text x="1604" y="3196" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Backprop through 24 GRU steps</text>
+<text x="1604" y="3225" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">1 epoch; Adam LR 0.0005</text>
+<text x="1604" y="3254" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Clip gradient norm to 1.0</text>
+<text x="1604" y="3283" fill="#cbd8eb" font-size="20" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Save student checkpoint</text>
+<path d="M 530 3240 L 572 3240" fill="none" stroke="#74d6cb" stroke-width="4" marker-end="url(#arrow)"/>
+<path d="M 1030 3240 L 1072 3240" fill="none" stroke="#74d6cb" stroke-width="4" marker-end="url(#arrow)"/>
+<path d="M 1530 3240 L 1572 3240" fill="none" stroke="#74d6cb" stroke-width="4" marker-end="url(#arrow)"/>
+<rect x="45" y="3455" width="2010" height="355" rx="30" fill="#111d31" stroke="#32445f" stroke-width="2"/>
+<rect x="75" y="3480" width="55" height="55" rx="15" fill="#30476c"/>
+<text x="102" y="3517" fill="#e8efff" font-size="26" font-weight="800" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="middle">6</text>
+<text x="150" y="3515" fill="#e8efff" font-size="35" font-weight="750" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">DEPLOYMENT / INFERENCE</text>
+<text x="151" y="3549" fill="#a8bbd5" font-size="21" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Only the student policy and its GRU memory run on the Go2</text>
+<rect x="80" y="3565" width="450" height="185" rx="22" fill="#164148" stroke="#4caea4" stroke-width="2"/>
+<text x="104" y="3606" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Export</text>
+<text x="104" y="3641" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Student checkpoint → ONNX</text>
+<text x="104" y="3670" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Export gains, joint order, grid config</text>
+<text x="104" y="3699" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Verify ONNX vs PyTorch actions</text>
+<rect x="580" y="3565" width="450" height="185" rx="22" fill="#164148" stroke="#4caea4" stroke-width="2"/>
+<text x="604" y="3606" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Robot inputs</text>
+<text x="604" y="3641" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">54 body/command + 99 heights = 153</text>
+<text x="604" y="3670" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">LiDAR → 0.4 s buffer → UDP map</text>
+<text x="604" y="3699" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Stale/missing map → zeros</text>
+<rect x="1080" y="3565" width="450" height="185" rx="22" fill="#164148" stroke="#4caea4" stroke-width="2"/>
+<text x="1104" y="3606" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">ONNX step</text>
+<text x="1104" y="3641" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">(obs [1,153], h [1,1,256])</text>
+<text x="1104" y="3670" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">→ (actions [1,12], next h)</text>
+<text x="1104" y="3699" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Next h feeds the following step</text>
+<rect x="1580" y="3565" width="440" height="185" rx="22" fill="#164148" stroke="#4caea4" stroke-width="2"/>
+<text x="1604" y="3606" fill="#e8efff" font-size="26" font-weight="730" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Go2 controller</text>
+<text x="1604" y="3641" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Joint target = q_default + 0.25a</text>
+<text x="1604" y="3670" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Motor PD applies torque</text>
+<text x="1604" y="3699" fill="#cbd8eb" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">No teacher, critic, or decoder</text>
+<path d="M 530 3657 L 572 3657" fill="none" stroke="#74d6cb" stroke-width="4" marker-end="url(#arrow)"/>
+<path d="M 1030 3657 L 1072 3657" fill="none" stroke="#74d6cb" stroke-width="4" marker-end="url(#arrow)"/>
+<path d="M 1530 3657 L 1572 3657" fill="none" stroke="#74d6cb" stroke-width="4" marker-end="url(#arrow)"/>
+<text x="80" y="3848" fill="#879ab6" font-size="19" font-weight="400" font-family="Inter, DejaVu Sans, Arial, sans-serif" text-anchor="start">Sources: mjlab/tasks/velocity/config/go2 · velocity_env_cfg.py · rewards.py · rsl_rl/{modules,networks,algorithms,runners} · scripts/export_deploy.py</text>
+</svg>

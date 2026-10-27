@@ -113,13 +113,13 @@ REGISTER_OBSERVATION(last_action)
 REGISTER_OBSERVATION(velocity_commands)
 {
     std::vector<float> obs(3);
-    auto & joystick = env->robot->data.joystick;
+    const auto& axes = env->robot->data.velocity_axes;
 
     const auto cfg = env->cfg["commands"]["base_velocity"]["ranges"];
 
-    obs[0] = std::clamp(joystick->ly(), cfg["lin_vel_x"][0].as<float>(), cfg["lin_vel_x"][1].as<float>());
-    obs[1] = std::clamp(-joystick->lx(), cfg["lin_vel_y"][0].as<float>(), cfg["lin_vel_y"][1].as<float>());
-    obs[2] = std::clamp(-joystick->rx(), cfg["ang_vel_z"][0].as<float>(), cfg["ang_vel_z"][1].as<float>());
+    obs[0] = std::clamp(axes[0], cfg["lin_vel_x"][0].as<float>(), cfg["lin_vel_x"][1].as<float>());
+    obs[1] = std::clamp(axes[1], cfg["lin_vel_y"][0].as<float>(), cfg["lin_vel_y"][1].as<float>());
+    obs[2] = std::clamp(axes[2], cfg["ang_vel_z"][0].as<float>(), cfg["ang_vel_z"][1].as<float>());
 
     return obs;
 }
@@ -148,12 +148,14 @@ REGISTER_OBSERVATION(gait_phase_pgtt)
     const auto offsets = params["offsets"].as<std::vector<float>>();
     const float two_pi = 2.0f * static_cast<float>(M_PI);
 
-    env->global_phase = std::fmod(env->global_phase + two_pi * f * env->step_dt, two_pi);
+    // Observation construction/reset may call this function more than once.
+    // Derive phase from time instead of advancing the clock on each read.
+    const float phase = std::fmod(two_pi * f * env->step_dt * env->episode_length, two_pi);
 
     const size_t n = offsets.size();
     std::vector<float> obs(2 * n + 1);
     for (size_t i = 0; i < n; ++i) {
-        const float phi = env->global_phase + offsets[i];
+        const float phi = phase + offsets[i];
         obs[i] = std::cos(phi);
         obs[n + i] = std::sin(phi);
     }

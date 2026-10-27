@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from __future__ import annotations
+from copy import deepcopy
 
 import os
 import time
@@ -23,9 +24,10 @@ class DistillationRunner(OnPolicyRunner):
     """On-policy runner for training and evaluation of teacher-student training."""
 
     def __init__(self, env: VecEnv, train_cfg: dict, log_dir: str | None = None, device="cpu"):
-        self.cfg = train_cfg
-        self.alg_cfg = train_cfg["algorithm"]
-        self.policy_cfg = train_cfg["policy"]
+        self.train_cfg = deepcopy(train_cfg)
+        self.cfg = deepcopy(train_cfg)
+        self.alg_cfg = self.cfg["algorithm"]
+        self.policy_cfg = self.cfg["policy"]
         self.device = device
         self.env = env
 

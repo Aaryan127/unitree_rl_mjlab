@@ -32,7 +32,13 @@ public:
             lowstate->msg_.imu_state().quaternion()[2],
             lowstate->msg_.imu_state().quaternion()[3]
         );
+        if (!data.root_quat_w.coeffs().allFinite() || data.root_quat_w.norm() < 1e-6f)
+            throw std::runtime_error("Invalid IMU quaternion");
+        data.root_quat_w.normalize();
         data.projected_gravity_b = data.root_quat_w.conjugate() * data.GRAVITY_VEC_W;
+        // The SDK updates the joystick under this same mutex. Copy the axes so
+        // the policy thread never races the FSM's joystick update.
+        data.velocity_axes = {lowstate->joystick.ly(), -lowstate->joystick.lx(), -lowstate->joystick.rx()};
         // joint positions and velocities
         for(int i(0); i< data.joint_ids_map.size(); i++) {
             data.joint_pos[i] = lowstate->msg_.motor_state()[data.joint_ids_map[i]].q();

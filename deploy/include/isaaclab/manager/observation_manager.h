@@ -94,6 +94,8 @@ public:
 protected:
     void _prapare_terms()
     {
+        if (!cfg.IsMap() || cfg.size() == 0)
+            throw std::runtime_error("Deployment observations must be a nonempty map");
         // check whether have multiple input
         bool only_one_input = this->cfg.begin()->second["params"].IsDefined(); // trick to check
         if(only_one_input) {

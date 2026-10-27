@@ -34,6 +34,14 @@ public:
         if(!cfg["clip"].IsNull()) {
             _clip = cfg["clip"].as<std::vector<std::vector<float> >>();
         }
+        if ((!_scale.empty() && _scale.size() != _action_dim) ||
+            (!_offset.empty() && _offset.size() != _action_dim) ||
+            (!_clip.empty() && _clip.size() != _action_dim))
+            throw std::runtime_error("Invalid action scale/offset/clip dimensions");
+        for (const auto& bounds : _clip)
+            if (bounds.size() != 2 || !std::isfinite(bounds[0]) ||
+                !std::isfinite(bounds[1]) || bounds[0] > bounds[1])
+                throw std::runtime_error("Invalid joint-target bounds");
     }
 
     virtual void process_actions(std::vector<float> actions)
@@ -77,7 +85,7 @@ public:
 
     void reset()
     {
-        _raw_actions.assign(_action_dim, 0.0f);
+        process_actions(std::vector<float>(_action_dim, 0.0f));
     }
 
 protected:

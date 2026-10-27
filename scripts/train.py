@@ -29,6 +29,8 @@ class TrainConfig:
     teacher_checkpoint: str | None = None
     """Distillation only: teacher model_*.pt. Default: latest checkpoint of
     agent.teacher_experiment_name."""
+    terrain: Literal["flat", "stairs", "rough", "mixed"] | None = None
+    allow_legacy_config: bool = False
     video: bool = False
     video_length: int = 200
     video_interval: int = 2000
@@ -46,6 +48,9 @@ class TrainConfig:
 
 
 def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
+    if cfg.terrain is not None:
+        from mjlab.tasks.velocity.terrain_profiles import set_terrain_profile
+        set_terrain_profile(cfg.env, cfg.terrain)
     cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
     if cuda_visible == "":
         device = "cpu"
@@ -128,6 +133,7 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
     env = RslRlVecEnvWrapper(env, clip_actions=cfg.agent.clip_actions)
 
     agent_cfg = asdict(cfg.agent)
+    agent_cfg["task_id"] = task_id
     env_cfg = asdict(cfg.env)
 
     # PPO (teacher, stock tasks) or distillation (student), chosen by the RL config.
@@ -146,6 +152,11 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
     runner.add_git_repo_to_log(__file__)
     if resume_path is not None:
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
+        import torch
+        from mjlab.utils.checkpoint import assert_resume_compatible
+        assert_resume_compatible(
+            torch.load(resume_path, weights_only=False, map_location="cpu"),
+            cfg.env, agent_cfg, allow_legacy=cfg.allow_legacy_config)
         runner.load(str(resume_path))
 
     if rank == 0:

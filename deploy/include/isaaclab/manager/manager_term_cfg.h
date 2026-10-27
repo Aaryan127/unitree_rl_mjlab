@@ -7,6 +7,8 @@
 #include <vector>
 #include <functional>
 #include <numeric>
+#include <algorithm>
+#include <stdexcept>
 
 namespace isaaclab
 {
@@ -31,6 +33,9 @@ struct ObservationTermCfg
 
     void add(std::vector<float> obs)
     {
+        if (history_length < 1 || (!scale.empty() && scale.size() != obs.size()) ||
+            (!clip.empty() && (clip.size() != 2 || clip[0] > clip[1])))
+            throw std::runtime_error("Invalid observation history/scale/clip configuration");
         for(int j = 0; j < obs.size(); ++j)
         {
             if(scale_first) {

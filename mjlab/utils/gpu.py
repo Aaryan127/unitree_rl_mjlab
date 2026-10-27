@@ -62,6 +62,9 @@ def select_gpus(
 
     available_gpus = list(range(torch.cuda.device_count()))
 
+  if not available_gpus:
+    return None, 0
+
   # Map gpu_ids indices to actual GPU IDs.
   if gpu_ids == "all":
     selected_gpus = available_gpus

@@ -10,6 +10,8 @@
 #include "isaaclab/assets/articulation/articulation.h"
 #include "isaaclab/algorithms/algorithms.h"
 #include <iostream>
+#include <cmath>
+#include <set>
 #include "isaaclab/utils/utils.h"
 
 namespace isaaclab
@@ -40,6 +42,24 @@ public:
             robot->data.joint_damping = cfg["damping"].as<std::vector<float>>();
         }
 
+        const auto n = robot->data.joint_ids_map.size();
+        if (!std::isfinite(step_dt) || step_dt <= 0 || n == 0 ||
+            robot->data.default_joint_pos.size() != n ||
+            robot->data.joint_stiffness.size() < n ||
+            robot->data.joint_damping.size() != robot->data.joint_stiffness.size())
+            throw std::runtime_error("Invalid deployment timing or joint-vector dimensions");
+        std::set<int> ids;
+        for (size_t i = 0; i < n; ++i) {
+            const float id = robot->data.joint_ids_map[i];
+            if (!std::isfinite(id) || id < 0 || id >= robot->data.joint_stiffness.size() || std::floor(id) != id ||
+                !ids.insert(static_cast<int>(id)).second)
+                throw std::runtime_error("Invalid or duplicate SDK joint index");
+            if (!std::isfinite(robot->data.default_joint_pos[i]) ||
+                !std::isfinite(robot->data.joint_stiffness[i]) || robot->data.joint_stiffness[i] < 0 ||
+                !std::isfinite(robot->data.joint_damping[i]) || robot->data.joint_damping[i] < 0)
+                throw std::runtime_error("Invalid deployment pose or PD gain");
+        }
+
         robot->update();
 
         // load managers
@@ -59,11 +79,11 @@ public:
 
     void step()
     {
-        episode_length += 1;
         robot->update();
         auto obs = observation_manager->compute();
         auto action = alg->act(obs);
         action_manager->process_action(action);
+        episode_length += 1;
     }
 
     float step_dt;

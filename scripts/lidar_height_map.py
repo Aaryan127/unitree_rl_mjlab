@@ -88,6 +88,8 @@ class BridgeConfig:
   """Ignore cloud timestamps (LiDAR and this computer not time-synced): treat each cloud
   as captured on arrival and use the latest pose/TF."""
   max_rate: float = 20.0
+  max_pose_age: float = 0.15
+  """Reject a stale base pose even while fresh point clouds continue to arrive."""
 
 
 def quaternion_matrix(rotation) -> np.ndarray:
@@ -185,12 +187,14 @@ class PointBuffer:
   """Rolling buffer of world-frame points from the last `horizon` seconds."""
 
   def __init__(self, horizon: float, max_points: int):
+    if horizon < 0 or max_points < 1:
+      raise ValueError("Point-buffer horizon must be nonnegative and capacity positive")
     self.horizon = horizon
     self.max_points = max_points
     self._chunks: list[tuple[float, np.ndarray]] = []
 
   def add(self, stamp: float, world_points: np.ndarray) -> None:
-    self._chunks.append((stamp, world_points))
+    self._chunks.append((stamp, world_points[-self.max_points:]))
     self.prune(stamp)
 
   def prune(self, now: float) -> None:
@@ -236,10 +240,15 @@ def main(cfg: BridgeConfig) -> None:
   with open(cfg.deploy_yaml, encoding="utf-8") as f:
     params = yaml.safe_load(f)["observations"]["height_scan"]["params"]
   cfg = apply_training_settings(cfg, params)
-  if cfg.min_points_per_cell < 1 or cfg.cell_radius <= 0 or cfg.max_rate <= 0:
+  if (cfg.min_points_per_cell < 1 or cfg.cell_radius <= 0 or cfg.max_rate <= 0
+      or cfg.max_cloud_age <= 0 or cfg.max_pose_age <= 0):
     raise ValueError("Cell count, radius and rate must be positive")
   if not 0 <= cfg.min_coverage <= 1 or cfg.min_z >= cfg.max_z:
     raise ValueError("Invalid coverage or ground-height range")
+  if not 0 <= cfg.quantile <= 1:
+    raise ValueError("Ground quantile must be between 0 and 1")
+  if not 1 <= int(params["udp_port"]) <= 65535:
+    raise ValueError("Height-map UDP receiver is disabled or has an invalid port")
   if cfg.pose_source not in ("tf", "odom"):
     raise ValueError("pose_source must be 'tf' or 'odom'")
   if cfg.max_cloud_age >= float(params["timeout"]):
@@ -265,6 +274,8 @@ def main(cfg: BridgeConfig) -> None:
       self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
       self.points = PointBuffer(cfg.accumulate_time, cfg.max_buffer_points)
       self.base_pose = None  # latest base pose (odom mode)
+      self.base_pose_received = 0.0
+      self.base_pose_source_age = 0.0
       self.last_sent = 0.0
       self.last_warning = 0.0
       self.create_subscription(PointCloud2, cfg.cloud_topic, self.on_cloud, qos_profile_sensor_data)
@@ -286,6 +297,9 @@ def main(cfg: BridgeConfig) -> None:
         self.warn_limited(f"Odometry frame '{msg.header.frame_id}' != world_frame '{cfg.world_frame}'")
         return
       self.base_pose = _odom_to_transform(msg)
+      self.base_pose_received = time.monotonic()
+      self.base_pose_source_age = (
+        self.get_clock().now() - Time.from_msg(msg.header.stamp)).nanoseconds * 1e-9
 
     def lookup(self, target: str, source: str, stamp):
       return self.tf_buffer.lookup_transform(
@@ -307,11 +321,23 @@ def main(cfg: BridgeConfig) -> None:
         else:
           cloud_tf = self.lookup(cfg.world_frame, msg.header.frame_id, stamp)
         if cfg.pose_source == "tf":
-          base_tf = self.lookup(cfg.world_frame, cfg.base_frame, Time())  # latest pose
+          stamped_pose = self.tf_buffer.lookup_transform(
+            cfg.world_frame, cfg.base_frame, Time(), timeout=Duration(seconds=0.02))
+          pose_age = (self.get_clock().now() - Time.from_msg(stamped_pose.header.stamp)).nanoseconds * 1e-9
+          if pose_age < -0.05 or pose_age > cfg.max_pose_age:
+            self.warn_limited(f"Ignoring stale base TF: age {pose_age:.3f} s")
+            return
+          base_tf = stamped_pose.transform
         else:
           base_tf = self.base_pose
           if base_tf is None:
             self.warn_limited(f"No odometry received on {cfg.odom_topic} yet")
+            return
+          pose_age = now - self.base_pose_received
+          if not cfg.use_receive_time:
+            pose_age += self.base_pose_source_age
+          if pose_age < -0.05 or pose_age > cfg.max_pose_age:
+            self.warn_limited(f"Ignoring stale odometry: age {pose_age:.3f} s")
             return
       except TransformException as exc:
         self.warn_limited(f"Missing TF: {exc}")

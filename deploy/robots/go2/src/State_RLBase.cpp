@@ -14,10 +14,14 @@ State_RLBase::State_RLBase(int state_mode, std::string state_string)
         std::make_shared<unitree::BaseArticulation<LowState_t::SharedPtr>>(FSMState::lowstate)
     );
     env->alg = std::make_unique<isaaclab::OrtRunner>(policy_dir / "exported" / "policy.onnx");
+    const auto initial_action = env->alg->act(env->observation_manager->compute());
+    if (initial_action.size() != static_cast<size_t>(env->action_manager->total_action_dim()))
+        throw std::runtime_error("ONNX action size does not match deploy.yaml");
+    env->alg->reset();
 
     this->registered_checks.emplace_back(
         std::make_pair(
-            [&]()->bool{ return isaaclab::mdp::bad_orientation(env.get(), 1.0); },
+            [&]()->bool{ return policy_fault(); },
             FSMStringMap.right.at("Passive")
         )
     );
@@ -25,7 +29,12 @@ State_RLBase::State_RLBase(int state_mode, std::string state_string)
 
 void State_RLBase::run()
 {
-    auto action = env->action_manager->processed_actions();
+    if (policy_fault()) return;
+    std::vector<float> action;
+    {
+        std::lock_guard<std::mutex> lock(target_mutex);
+        action = targets;
+    }
     for(int i(0); i < env->robot->data.joint_ids_map.size(); i++) {
         lowcmd->msg_.motor_cmd()[env->robot->data.joint_ids_map[i]].q() = action[i];
     }

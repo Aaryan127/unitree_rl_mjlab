@@ -162,6 +162,8 @@ class JointPositionActionCfg(BaseActionCfg):
   """Configuration for joint position control."""
 
   use_default_offset: bool = True
+  clip_to_joint_limits: bool = False
+  """Clamp position targets to the model's joint limits, in both sim and export."""
 
   def __post_init__(self):
     self.transmission_type = TransmissionType.JOINT
@@ -202,6 +204,12 @@ class JointPositionAction(BaseAction):
 
     if cfg.use_default_offset:
       self._offset = self._entity.data.default_joint_pos[:, self._target_ids].clone()
+
+  def process_actions(self, actions: torch.Tensor):
+    super().process_actions(actions)
+    if self.cfg.clip_to_joint_limits:
+      limits = self._entity.data.joint_pos_limits[:, self._target_ids]
+      self._processed_actions = torch.clamp(self._processed_actions, limits[..., 0], limits[..., 1])
 
   def apply_actions(self) -> None:
     encoder_bias = self._entity.data.encoder_bias[:, self._target_ids]

@@ -46,7 +46,7 @@ inline YAML::Node config;
 
 inline std::filesystem::path get_bin_path() {
     std::vector<char> path(1024);
-    ssize_t len = readlink("/proc/self/exe", &path[0], path.size());
+    ssize_t len = readlink("/proc/self/exe", &path[0], path.size() - 1);
     if (len != -1) {
         path[len] = '\0';  // Null-terminate the result
         return std::filesystem::path(&path[0]);

@@ -290,6 +290,8 @@ def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   ##
 
   if play:
+    from mjlab.utils.checkpoint import nominal_eval_cfg
+    cfg = nominal_eval_cfg(cfg)
     cfg.episode_length_s = int(1e9)
     for group in ("policy", "proprio_history", "height_noisy"):
       cfg.observations[group].enable_corruption = False

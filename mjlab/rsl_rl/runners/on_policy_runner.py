@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from __future__ import annotations
+from copy import deepcopy
 
 import os
 import statistics
@@ -12,7 +13,7 @@ import torch
 import warnings
 from collections import deque
 
-import rsl_rl
+import mjlab.rsl_rl
 from mjlab.rsl_rl.algorithms import PPO
 from mjlab.rsl_rl.env import VecEnv
 from mjlab.rsl_rl.modules import (  # noqa: F401  (names used by eval(class_name))
@@ -31,9 +32,10 @@ class OnPolicyRunner:
     """On-policy runner for training and evaluation of actor-critic methods."""
 
     def __init__(self, env: VecEnv, train_cfg: dict, log_dir: str | None = None, device="cpu"):
-        self.cfg = train_cfg
-        self.alg_cfg = train_cfg["algorithm"]
-        self.policy_cfg = train_cfg["policy"]
+        self.train_cfg = deepcopy(train_cfg)
+        self.cfg = deepcopy(train_cfg)
+        self.alg_cfg = self.cfg["algorithm"]
+        self.policy_cfg = self.cfg["policy"]
         self.device = device
         self.env = env
 
@@ -64,7 +66,7 @@ class OnPolicyRunner:
         self.tot_timesteps = 0
         self.tot_time = 0
         self.current_learning_iteration = 0
-        self.git_status_repos = [rsl_rl.__file__]
+        self.git_status_repos = [mjlab.rsl_rl.__file__]
 
     def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):  # noqa: C901
         # initialize writer
@@ -316,6 +318,8 @@ class OnPolicyRunner:
             "optimizer_state_dict": self.alg.optimizer.state_dict(),
             "iter": self.current_learning_iteration,
             "infos": infos,
+            "train_cfg": self.train_cfg,
+            "env_cfg": deepcopy(self.env.cfg),
         }
         # -- Save RND model if used
         if hasattr(self.alg, "rnd") and self.alg.rnd:
@@ -355,14 +359,15 @@ class OnPolicyRunner:
                 self.alg.rnd_optimizer.load_state_dict(loaded_dict["rnd_optimizer_state_dict"])
         # -- load current learning iteration
         if resumed_training:
-            self.current_learning_iteration = loaded_dict["iter"]
+            self.current_learning_iteration = loaded_dict["iter"] + 1
         return loaded_dict["infos"]
 
     def get_inference_policy(self, device=None):
         self.eval_mode()  # switch to evaluation mode (dropout for example)
         if device is not None:
             self.alg.policy.to(device)
-        return self.alg.policy.act_inference
+        from mjlab.utils.checkpoint import InferencePolicy
+        return InferencePolicy(self.alg.policy)
 
     def train_mode(self):
         # -- PPO

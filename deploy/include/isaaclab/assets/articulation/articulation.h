@@ -4,6 +4,8 @@
 #pragma once
 
 #include <eigen3/Eigen/Dense>
+#include <array>
+#include <vector>
 #include "unitree/dds_wrapper/common/unitree_joystick.hpp"
 
 namespace isaaclab
@@ -39,6 +41,7 @@ struct ArticulationData
     std::vector<float> joint_ids_map;
 
     unitree::common::UnitreeJoystick* joystick = nullptr;
+    std::array<float, 3> velocity_axes{};
 };
 
 class Articulation

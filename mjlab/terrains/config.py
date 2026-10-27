@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 import mujoco
 
 import mjlab.terrains as terrain_gen
@@ -99,6 +101,27 @@ PGTT_STAIRS_TERRAINS_CFG = TerrainGeneratorCfg(
   },
   add_lights=True,
 )
+
+# One policy is trained on all deployment surfaces. Keep the original stairs-only
+# recipe available for controlled evaluation and experiments.
+PGTT_MIXED_TERRAINS_CFG = deepcopy(PGTT_STAIRS_TERRAINS_CFG)
+for name, terrain in PGTT_MIXED_TERRAINS_CFG.sub_terrains.items():
+  terrain.proportion = 0.20 if name == "flat" else 0.125
+PGTT_MIXED_TERRAINS_CFG.sub_terrains.update({
+  "random_rough": terrain_gen.HfRandomUniformTerrainCfg(
+    proportion=0.10, noise_range=(0.0, 0.05), noise_step=0.01, border_width=0.25,
+  ),
+  "slope_up": terrain_gen.HfPyramidSlopedTerrainCfg(
+    proportion=0.075, slope_range=(0.0, 0.25), platform_width=2.0, border_width=0.25,
+  ),
+  "slope_down": terrain_gen.HfPyramidSlopedTerrainCfg(
+    proportion=0.075, slope_range=(0.0, 0.25), platform_width=2.0,
+    border_width=0.25, inverted=True,
+  ),
+  "waves": terrain_gen.HfWaveTerrainCfg(
+    proportion=0.05, amplitude_range=(0.0, 0.05), num_waves=4, border_width=0.25,
+  ),
+})
 
 
 if __name__ == "__main__":

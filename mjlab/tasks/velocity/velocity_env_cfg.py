@@ -22,7 +22,7 @@ from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.velocity import mdp
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.terrains import TerrainImporterCfg
-from mjlab.terrains.config import PGTT_STAIRS_TERRAINS_CFG, ROUGH_TERRAINS_CFG
+from mjlab.terrains.config import PGTT_MIXED_TERRAINS_CFG, ROUGH_TERRAINS_CFG
 from mjlab.utils.noise import HeightScanNoiseModelCfg
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
@@ -522,6 +522,7 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
       actuator_names=(".*",),
       scale=0.25,
       use_default_offset=True,
+      clip_to_joint_limits=True,
     )
   }
 
@@ -838,7 +839,7 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
     scene=SceneCfg(
       terrain=TerrainImporterCfg(
         terrain_type="generator",
-        terrain_generator=replace(PGTT_STAIRS_TERRAINS_CFG),
+        terrain_generator=replace(PGTT_MIXED_TERRAINS_CFG),
         max_init_terrain_level=3,
       ),
       num_envs=1,

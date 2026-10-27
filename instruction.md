@@ -1,5 +1,10 @@
 # PGTT teacher-student on the Unitree Go2
 
+The current default PGTT tasks cover **flat ground, stairs, and moderate rough terrain**.
+See [the deployment audit](doc/pgtt_deployment_audit.md) for repaired issues, executed
+checks, remaining hardware/training requirements, and the evaluation/export commands.
+Existing smoke checkpoints must be replaced by a fully trained and evaluated student.
+
 This branch trains a terrain-aware locomotion policy for the Go2 and deploys it on the
 real robot. It combines two papers:
 
@@ -53,8 +58,11 @@ CUDA_VISIBLE_DEVICES="" python scripts/train.py Mjlab-Velocity-PGTT-Teacher-Unit
 `play`, `latest`, `tb`, `export`; `scripts/pgtt.sh help`). Opt-in debug switches work with any
 command: `MJLAB_DEBUG=1` (term summaries, network wiring, reward-balance table),
 `MJLAB_DEBUG_NAN=1` (find the term that produced a NaN), `MJLAB_BREAK=reward:foot_phase`
-(stop in pdb after a term; also `obs:<group>[/<term>]`, `step`, `update`). Details:
-`mjlab/utils/debug.py` and CODE_GUIDE Part 7.
+(stop in pdb after a term; also `obs:<group>[/<term>]`, `step`, `update`), and
+`MJLAB_DROP=reward:<x>,obs:<group>/<term>,event:<x>,sensor:<x>,...` (remove terms for an
+experiment). Every terminal command for debugging and experiments (pdb, terrain, rewards,
+sensors, privileged info, randomization, comparing runs): **DEBUG_AND_EXPERIMENT.md**.
+Details: `mjlab/utils/debug.py` and CODE_GUIDE Part 7.
 
 ### How-to (the cpu branch's checklists, for this branch)
 **Add a sensor:** add a `ContactSensorCfg` / `RayCastSensorCfg` in `unitree_go2_pgtt_env_cfg`

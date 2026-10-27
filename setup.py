@@ -1,6 +1,6 @@
 """Installation script for the 'unitree_rl_mjlab' python package."""
 
-from setuptools import setup
+from setuptools import find_namespace_packages, setup
 
 # Minimum dependencies required prior to installation
 INSTALL_REQUIRES = [
@@ -12,7 +12,7 @@ INSTALL_REQUIRES = [
     # Pinned: the mujoco-warp commit from doc/setup_en.md fails with newer
     # mujoco ('MjData' has no attribute 'qM') and newer warp (kernel codegen error).
     "warp-lang==1.11.1",
-    "mujoco-warp",
+    "mujoco-warp @ git+https://github.com/google-deepmind/mujoco_warp@9491175b7cbea87e28d3e3e67733095317c33398",
     "mujoco==3.4.0",
     "scipy",  # imported by mjlab/terrains/heightfield_terrains.py
     "onnxruntime",  # scripts/export_deploy.py verifies the exported policy
@@ -29,7 +29,8 @@ INSTALL_REQUIRES = [
 # Installation operation
 setup(
     name="unitree_rl_mjlab",
-    packages=["mjlab"],
+    packages=find_namespace_packages(include=["mjlab", "mjlab.*"]),
+    package_data={"": ["*.xml", "*.obj", "*.STL", "*.csv", "*.md"]},
     version="0.0.1",
     install_requires=INSTALL_REQUIRES,
 )

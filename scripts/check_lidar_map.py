@@ -42,6 +42,14 @@ def _tf(pos, quat_wxyz):
 def main(num_envs: int = 32) -> None:
   cfg = load_env_cfg(TASK, play=True)
   cfg.scene.num_envs = num_envs
+  cfg.seed = 42
+  generator = cfg.scene.terrain.terrain_generator
+  generator.seed = 42
+  generator.num_rows = 1
+  generator.num_cols = 20
+  generator.curriculum = True  # fixed columns cover every training terrain type
+  generator.difficulty_range = (0.5, 0.5)
+  cfg.scene.terrain.max_init_terrain_level = 0
   term = cfg.observations["height_noisy"].terms["height_scan"]
   term.params["point_noise_std"] = 0.0  # compare geometry, not random noise
   term.delay_max_lag = 0  # compare the same frame (training delays the map 0-3 steps)
@@ -55,12 +63,22 @@ def main(num_envs: int = 32) -> None:
 
   env = ManagerBasedRlEnv(cfg=cfg, device="cpu")
   env.reset()
+  all_errors = []
   for _ in range(20):
     env.step(torch.zeros(num_envs, env.action_manager.total_action_dim))
-  for label in ("standing", "moving randomly"):
+  for label in ("standing", "moving randomly", "at terrain edges"):
     if label == "moving randomly":
       for _ in range(30):
         env.step(2 * torch.rand(num_envs, env.action_manager.total_action_dim) - 1)
+    if label == "at terrain edges":
+      robot = env.scene["robot"]
+      pose = torch.cat([env.scene.env_origins + torch.tensor([1.6, 0.0, 0.5]),
+                        robot.data.root_link_quat_w.clone()], dim=1)
+      robot.write_root_link_pose_to_sim(pose)
+      robot.write_root_link_velocity_to_sim(torch.zeros(num_envs, 6))
+      env.sim.forward()
+      for _ in range(10):
+        env.step(torch.zeros(num_envs, env.action_manager.total_action_dim))
     obs = env.observation_manager.compute()
     sim, ideal = obs["height_noisy"].numpy(), obs["height"].numpy()
     lidar, robot = env.scene["lidar"].data, env.scene["robot"].data
@@ -74,19 +92,21 @@ def main(num_envs: int = 32) -> None:
       errors.append(np.abs(values - sim[i]).max())
       coverage.append(cov)
     errors = np.array(errors)
+    all_errors.extend(errors)
     seen = sim != 0
     acc = np.abs(sim - ideal)[seen]
     print(f"\n[{label}]")
     print(f"  bridge vs training map: max diff {errors.max():.5f} m "
           f"({(errors > 1e-3).sum()}/{num_envs} robots differ by > 1 mm)")
     print(f"  LiDAR grid coverage: mean {np.mean(coverage):.2f}, min {np.min(coverage):.2f}")
-    print(f"  LiDAR map vs ideal ray-cast map on seen cells: mean {acc.mean()*100:.2f} cm, "
-          f"max {acc.max()*100:.2f} cm")
+    if acc.size:
+      print(f"  LiDAR map vs ideal ray-cast map on nonzero cells: mean {acc.mean()*100:.2f} cm, "
+            f"max {acc.max()*100:.2f} cm")
   missing = (sim == 0).mean(0).reshape(9, 11)
-  print("\n  fraction of robots with no data per cell (rows y left->right, cols x back->front):")
+  print("\n  zero-valued cells (flat or missing; rows y, cols x back->front):")
   for row in missing:
     print("   " + " ".join(f"{v:.1f}" for v in row))
-  ok = errors.max() <= 1e-3
+  ok = np.max(all_errors) <= 1e-3
   print("\nRESULT:", "bridge matches training" if ok else "MISMATCH between bridge and training")
   env.close()
   sys.exit(0 if ok else 1)

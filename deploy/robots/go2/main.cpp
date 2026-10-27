@@ -42,7 +42,7 @@ int main(int argc, char** argv)
     fsm->start();
 
     std::cout << "Press [L2 + up] to enter FixStand mode.\n";
-    std::cout << "And then press [R2 + A] to start controlling the robot.\n";
+    std::cout << "And then press [R2 + X] to start the PGTT policy.\n";
 
     while (true)
     {

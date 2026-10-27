@@ -182,12 +182,17 @@ class BaseViewer(ABC):
       with self._sim_timer.measure_time():
         obs = self.env.get_observations()
         actions = self.policy(obs)
-        self.env.step(actions)
+        result = self.env.step(actions)
+        dones = result[2] | result[3] if len(result) == 5 else result[2]
+        if hasattr(self.policy, "reset"):
+          self.policy.reset(dones)
         self._step_count += 1
       self._accumulated_sim_time += self._sim_timer.measured_time
 
   def reset_environment(self) -> None:
     self.env.reset()
+    if hasattr(self.policy, "reset"):
+      self.policy.reset()
     self._step_count = 0
     self._timer.tick()
 
