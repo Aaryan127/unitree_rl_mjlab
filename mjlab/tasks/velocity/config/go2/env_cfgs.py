@@ -212,6 +212,22 @@ def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     reduce="none",
     num_slots=1,
   )
+  # Trunk or hips touching the terrain ends the episode. Without it the robot learned to
+  # lie on its belly and paddle its legs once the effort penalties ramped up (only
+  # flipping over >90 deg ended an episode). Thighs are left out: in the default crouch
+  # (base ~0.21 m) a thigh brushes the ground on landing; leg_contact penalises them.
+  body_ground_cfg = ContactSensorCfg(
+    name="body_ground_contact",
+    primary=ContactMatch(
+      mode="geom",
+      pattern=("base_collision",) + tuple(f"{leg}_hip_collision" for leg in _LEGS),
+      entity="robot",
+    ),
+    secondary=ContactMatch(mode="body", pattern="terrain"),
+    fields=("found",),
+    reduce="none",
+    num_slots=1,
+  )
   # 11 x 9 = 99 rays over 1.0 m x 0.8 m around the base, yaw-aligned (PGTT uses an
   # 11 x 9 robot-centric map). Origins start 0.5 m above the base so rays still start
   # above the terrain when the next steps are higher than the base. Only geom group 0
@@ -248,8 +264,13 @@ def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     feet_ground_cfg,
     feet_normals_cfg,
     leg_ground_cfg,
+    body_ground_cfg,
     height_scanner_cfg,
     lidar_cfg,
+  )
+  cfg.terminations["body_contact"] = TerminationTermCfg(
+    func=mdp.illegal_contact,
+    params={"sensor_name": body_ground_cfg.name},
   )
 
   if cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:

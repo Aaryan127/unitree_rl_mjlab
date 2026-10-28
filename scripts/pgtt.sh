@@ -10,6 +10,8 @@
 #   scripts/pgtt.sh latest  teacher|student   print the latest checkpoint path
 #   scripts/pgtt.sh tb                        tensorboard on logs/
 #   scripts/pgtt.sh export  [checkpoint]      export the student for the robot (default: latest)
+#   scripts/pgtt.sh hacks   teacher|student [checkpoint]   reward-hacking check (default: latest)
+#   scripts/pgtt.sh hacks   watch <run folder>              check each new checkpoint while training
 #
 # Any extra arguments are passed through, e.g.
 #   scripts/pgtt.sh teacher --agent.run-name sigma004 --env.rewards.foot-phase.params.sigma 0.004
@@ -66,5 +68,15 @@ case "$cmd" in
   export)
     ckpt="${1:-$(latest_checkpoint student)}"; shift || true
     python scripts/export_deploy.py --checkpoint-file "$ckpt" "$@" ;;
-  help|*)  sed -n '2,18p' "$0" ;;
+  hacks)
+    which="${1:-teacher}"; shift || true
+    if [[ "$which" == watch ]]; then
+      run="${1:?usage: pgtt.sh hacks watch <run folder>}"; shift
+      CUDA_VISIBLE_DEVICES="" python scripts/check_reward_hacking.py --watch "$run" "$@"
+    else
+      task_for "$which" >/dev/null
+      ckpt="${1:-$(latest_checkpoint "$which")}"; shift || true
+      CUDA_VISIBLE_DEVICES="" python scripts/check_reward_hacking.py --checkpoint-file "$ckpt" "$@"
+    fi ;;
+  help|*)  sed -n '2,20p' "$0" ;;
 esac

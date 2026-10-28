@@ -646,6 +646,31 @@ class stance_on_edge(_GaitFeetTerm):
     return torch.sum((z_max - z_min) * (~gait.swing_mask).float(), dim=1)
 
 
+def base_height_above_terrain(
+  env: ManagerBasedRlEnv, sensor_name: str, radius: float = 0.2
+) -> torch.Tensor:
+  """Base height above the ground under it: base z minus the median height-scan hit
+  within `radius` (horizontal) of the base, so a step ahead does not count."""
+  scan = env.scene[sensor_name].data
+  offset = torch.norm(scan.hit_pos_w[..., :2] - scan.pos_w[:, None, :2], dim=-1)
+  ground_z = torch.where(
+    (scan.distances >= 0) & (offset < radius), scan.hit_pos_w[..., 2], torch.nan
+  )
+  return scan.pos_w[:, 2] - torch.nanmedian(ground_z, dim=-1).values
+
+
+def base_height_below(
+  env: ManagerBasedRlEnv, sensor_name: str, target: float, radius: float = 0.2
+) -> torch.Tensor:
+  """(target - h)^2 when the base is lower than `target` above the terrain, else 0.
+
+  One-sided, so it stops crouching / lying low without paying the robot to stand
+  taller. 0 if no ray hit the ground near the base.
+  """
+  h = base_height_above_terrain(env, sensor_name, radius)
+  return torch.nan_to_num(torch.square(torch.clamp(target - h, min=0.0)), nan=0.0)
+
+
 def leg_ground_contact_count(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
   """Number of thigh/shank geoms touching the terrain (Miki r_shank_contact).
 

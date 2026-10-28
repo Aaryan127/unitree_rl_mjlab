@@ -692,25 +692,42 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   ##
-  # Rewards (PGTT Table I). mjlab multiplies every term by dt, so only the ratios
-  # between weights matter.
+  # Rewards (based on PGTT Table I). mjlab multiplies every term by dt, so only the
+  # ratios between weights matter.
+  #
+  # Balance (per second, flat, measured with scripted behaviours): with the original
+  # PGTT weights, standing still earned +3.2 (foot_phase +3.4 of its max 4.0: planted
+  # feet already match the stance height and most of the swing curve), while perfect
+  # tracking could add only +1.1 on top. The teacher drifted to lying down and paddling
+  # its legs. Tracking is now the largest term, foot_phase shapes the gait instead of
+  # paying for standing, and lying / crouching / falling cost something.
   ##
 
   rewards = {
     "track_lin_vel": RewardTermCfg(
       func=mdp.track_lin_vel_xy_exp,
-      weight=1.0,
+      weight=2.0,  # PGTT: 1.0
       params={"command_name": "twist", "sigma": 0.25},
     ),
     "track_ang_vel": RewardTermCfg(
       func=mdp.track_ang_vel_z_exp,
-      weight=0.5,
+      weight=1.0,  # PGTT: 0.5
       params={"command_name": "twist", "sigma": 0.25},
     ),
     "lin_vel_z": RewardTermCfg(func=mdp.lin_vel_z_l2, weight=-2.0),
     "ang_vel_xy": RewardTermCfg(func=mdp.ang_vel_xy_l2, weight=-0.05),
     "orientation": RewardTermCfg(func=mdp.flat_orientation_l2, weight=-0.2),
-    "termination": RewardTermCfg(func=mdp.is_terminated, weight=-1.0),
+    # Per episode end (not time-out). Scaled by dt like everything else, so -1 was a
+    # 0.02 penalty; -100 = -2, about half a second of good walking, on top of the lost
+    # future reward. Also stops "end the episode on purpose" if rewards ever go negative.
+    "termination": RewardTermCfg(func=mdp.is_terminated, weight=-100.0),
+    # Base below 0.25 m above the terrain (walks at ~0.27-0.30): -50 * (0.25 - h)^2,
+    # e.g. -0.8/s at 0.12 m. One-sided, so standing taller is not rewarded.
+    "base_height": RewardTermCfg(
+      func=mdp.base_height_below,
+      weight=-50.0,
+      params={"sensor_name": "height_scanner", "target": 0.25},
+    ),
     "joint_power": RewardTermCfg(func=mdp.joint_power, weight=-2e-5),
     "action_rate": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.01),
     "joint_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-1.0),
@@ -723,9 +740,9 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
       },
     ),
     "joint_torques": RewardTermCfg(func=mdp.joint_torques_l2, weight=-1e-5),
-    "foot_phase": RewardTermCfg(
+    "foot_phase": RewardTermCfg(  # summed over 4 feet: max 4 x weight
       func=mdp.foot_phase_tracking,
-      weight=1.0,
+      weight=0.5,  # PGTT: 1.0
       params={
         "command_name": "gait",
         "sensor_name": "height_scanner",
@@ -769,9 +786,9 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot"),
       },
     ),
-    "leg_contact": RewardTermCfg(  # thigh/shank touching the terrain
+    "leg_contact": RewardTermCfg(  # thigh/shank touching the terrain (knees on steps)
       func=mdp.leg_ground_contact_count,
-      weight=0.0,
+      weight=-0.25,  # on: kneeling / dragging legs was free before
       params={"sensor_name": "leg_ground_contact"},
     ),
     "foot_slip": RewardTermCfg(  # foot sliding while in contact
@@ -792,6 +809,10 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
     "joint_vel": RewardTermCfg(func=mdp.joint_vel_l2, weight=0.0),
     "joint_acc": RewardTermCfg(func=mdp.joint_acc_l2, weight=0.0),
     "action_smoothness": RewardTermCfg(func=mdp.action_acc_l2, weight=0.0),  # 2nd difference
+    # Always 0: logs Metrics/hack/* (base height, ground contact, speed ratio, ...) so
+    # reward hacking shows in TensorBoard (see mdp/hacking_monitor.py). Weight must be
+    # non-zero or the reward manager skips the call.
+    "hacking_monitor": RewardTermCfg(func=mdp.hacking_monitor, weight=1.0),
   }
 
   ##

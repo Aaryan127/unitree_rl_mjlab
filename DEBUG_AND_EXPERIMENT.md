@@ -350,6 +350,36 @@ python scripts/evaluate_pgtt.py --checkpoint-file <model.pt> --blind          # 
 This reports failures, velocity tracking, progress and map coverage per terrain, and writes
 `logs/pgtt_evaluation.json`.
 
+**Check for reward hacking (does it walk, or just score?):**
+A high reward or a full episode length does not mean it walks. The first flat teacher scored
+well by lying on its belly and paddling its legs. These measure what the robot physically does.
+
+Live, in TensorBoard during training: `Metrics/hack/*` (logged by the zero-weight
+`hacking_monitor` reward term, so it never changes training) and `Episode_Termination/body_contact`.
+
+| Graph | Healthy | Hacking looks like |
+|---|---|---|
+| `Metrics/hack/base_height` | ~0.25–0.30 m | below 0.15 m: crouching / lying |
+| `Metrics/hack/speed_ratio` | rises towards 1 | stays near 0: ignores the command |
+| `Metrics/hack/feet_down_moving` | below 0.5 | near 1: shuffling / sliding |
+| `Metrics/hack/leg_ground_frac` | near 0 | high: kneeling, dragging legs |
+| `Metrics/hack/body_ground_frac` | near 0 | above 0: trunk/hips on the ground |
+| `Episode_Termination/body_contact` | falls over training | stays high: keeps lying down |
+
+On a checkpoint (CPU, works on old checkpoints too), with an OK / WARN / HACK verdict per check
+and which reward terms the score comes from:
+```bash
+scripts/pgtt.sh hacks teacher                         # newest teacher checkpoint
+scripts/pgtt.sh hacks student <model.pt> --terrain stairs
+scripts/pgtt.sh hacks watch logs/rsl_rl/go2_pgtt_teacher/<run>   # every new checkpoint while training
+```
+`watch` runs on the CPU, so leave it in a second tmux window next to the training; it appends one
+row per checkpoint to `<run>/hacking_check.csv`. If it flags HACK at 1000–3000 iterations, stop
+the run and fix the rewards instead of waiting for the end.
+
+The trunk/hip ground contact termination (`body_contact`) is what stops the lying-down trick:
+lying now ends the episode and loses all future reward.
+
 **Then export and check the deploy files:**
 ```bash
 scripts/pgtt.sh export                   # newest student -> deploy/robots/go2/config/policy/pgtt/v0
