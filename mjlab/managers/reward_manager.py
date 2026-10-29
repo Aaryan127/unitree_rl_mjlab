@@ -56,11 +56,13 @@ class RewardManager(ManagerBase):
     env: ManagerBasedRlEnv,
     *,
     scale_by_dt: bool = True,
+    only_positive: bool = False,
   ):
     self._term_names: list[str] = list()
     self._term_cfgs: list[RewardTermCfg] = list()
     self._class_term_cfgs: list[RewardTermCfg] = list()
     self._scale_by_dt = scale_by_dt
+    self._only_positive = only_positive
 
     self.cfg = deepcopy(cfg)
     super().__init__(env=env)
@@ -115,6 +117,7 @@ class RewardManager(ManagerBase):
 
   def compute(self, dt: float) -> torch.Tensor:
     self._reward_buf[:] = 0.0
+    after_clip = torch.zeros_like(self._reward_buf)
     scale = dt if self._scale_by_dt else 1.0
     for term_idx, (name, term_cfg) in enumerate(
       zip(self._term_names, self._term_cfgs, strict=False)
@@ -127,9 +130,15 @@ class RewardManager(ManagerBase):
       if _debug.ENABLED:  # opt-in prints / NaN checks / pdb stops (mjlab/utils/debug.py)
         _debug.reward_hook(self._env, name, value, scale)
       value = torch.nan_to_num(value, nan=0.0, posinf=0.0, neginf=0.0)
-      self._reward_buf += value
+      if self._only_positive and name == "termination":
+        after_clip += value
+      else:
+        self._reward_buf += value
       self._episode_sums[name] += value
       self._step_reward[:, term_idx] = value / scale
+    if self._only_positive:
+      self._reward_buf.clamp_(min=0.0)
+      self._reward_buf += after_clip
     return self._reward_buf
 
   def get_active_iterable_terms(self, env_idx):

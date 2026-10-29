@@ -12,6 +12,7 @@ selected from the environment observation groups with these `obs_groups` keys:
 
 from __future__ import annotations
 
+import math
 import os
 
 import torch
@@ -45,6 +46,7 @@ class ActorCriticWild(nn.Module):
     activation="elu",
     init_noise_std=1.0,
     noise_std_type: str = "scalar",
+    max_noise_std: float | None = None,
     height_latent_dim: int = 32,
     privileged_latent_dim: int = 16,
     height_encoder_dims=(128, 64),
@@ -91,6 +93,7 @@ class ActorCriticWild(nn.Module):
     print(f"Critic MLP: {self.critic}")
 
     self.noise_std_type = noise_std_type
+    self.max_noise_std = max_noise_std
     if noise_std_type == "scalar":
       self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
     elif noise_std_type == "log":
@@ -134,6 +137,13 @@ class ActorCriticWild(nn.Module):
 
   def update_distribution(self, obs):
     mean = self.actor(*self.get_actor_obs(obs))
+    if self.max_noise_std is not None:
+      # Clamp the parameter itself: clamping the output would zero its gradient above the
+      # cap and freeze the std there.
+      if self.noise_std_type == "scalar":
+        self.std.data.clamp_(max=self.max_noise_std)
+      else:
+        self.log_std.data.clamp_(max=math.log(self.max_noise_std))
     if self.noise_std_type == "scalar":
       std = self.std.expand_as(mean)
     else:

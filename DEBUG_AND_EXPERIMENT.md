@@ -365,6 +365,13 @@ Live, in TensorBoard during training: `Metrics/hack/*` (logged by the zero-weigh
 | `Metrics/hack/leg_ground_frac` | near 0 | high: kneeling, dragging legs |
 | `Metrics/hack/body_ground_frac` | near 0 | above 0: trunk/hips on the ground |
 | `Episode_Termination/body_contact` | falls over training | stays high: keeps lying down |
+| `Train/mean_episode_length` | rises to ~1000 and stays | drops to tens of steps: falls on purpose |
+| `Policy/mean_noise_std` | falls below 1 | climbs (capped at 1.0 now): flails |
+
+The second flat teacher walked by iteration 500 and then learned to fall within a second: its
+noise std reached 2.5, and once the penalty ramp finished, staying alive cost more per second
+than one fall. The PGTT env now clips each step's summed reward at 0 (`only_positive_rewards`,
+termination added after the clip) and the teacher's noise std is capped at 1.0.
 
 On a checkpoint (CPU, works on old checkpoints too), with an OK / WARN / HACK verdict per check
 and which reward terms the score comes from:

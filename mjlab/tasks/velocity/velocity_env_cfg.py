@@ -719,7 +719,7 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
     "orientation": RewardTermCfg(func=mdp.flat_orientation_l2, weight=-0.2),
     # Per episode end (not time-out). Scaled by dt like everything else, so -1 was a
     # 0.02 penalty; -100 = -2, about half a second of good walking, on top of the lost
-    # future reward. Also stops "end the episode on purpose" if rewards ever go negative.
+    # future reward. Added after the only_positive_rewards clip, so it always applies.
     "termination": RewardTermCfg(func=mdp.is_terminated, weight=-100.0),
     # Base below 0.25 m above the terrain (walks at ~0.27-0.30): -50 * (0.25 - h)^2,
     # e.g. -0.8/s at 0.12 m. One-sided, so standing taller is not rewarded.
@@ -893,4 +893,8 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     decimation=4,
     episode_length_s=20.0,
+    # The first flat_v2 teacher walked by iteration 500, then the penalty ramp pushed the
+    # summed reward below 0 and it learned to fall within a second (-2 once) instead of
+    # paying for 20 s. See ManagerBasedRlEnvCfg.only_positive_rewards.
+    only_positive_rewards=True,
   )

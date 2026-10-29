@@ -69,6 +69,9 @@ def unitree_go2_pgtt_teacher_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   return RslRlOnPolicyRunnerCfg(
     policy=RslRlPpoActorCriticWildCfg(
       init_noise_std=1.0,
+      # The first flat_v2 teacher's std grew 1 -> 2.5 (noise past the joint limits is
+      # free), so the penalties under that noise outgrew the task reward. Can only shrink.
+      max_noise_std=1.0,
       actor_hidden_dims=(512, 256, 128),  # PGTT
       critic_hidden_dims=(512, 256, 128),
       activation="elu",

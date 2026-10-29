@@ -133,6 +133,13 @@ class ManagerBasedRlEnvCfg:
   algorithms that expect unscaled reward signals (e.g., HER, static reward scaling).
   """
 
+  only_positive_rewards: bool = False
+  """Clip each step's summed reward at 0 (legged_gym). The ``termination`` term is
+  added after the clip, so falling still costs. Without it, once the penalties outweigh
+  the task reward, ending the episode early beats staying alive and the policy learns to
+  fall on purpose. Per-term logs (Episode_Reward/*) show the unclipped values.
+  """
+
 
 class ManagerBasedRlEnv:
   """Manager-based RL environment."""
@@ -284,7 +291,10 @@ class ManagerBasedRlEnv:
     self.termination_manager = TerminationManager(self.cfg.terminations, self)
     print_info(f"[INFO] {self.termination_manager}")
     self.reward_manager = RewardManager(
-      self.cfg.rewards, self, scale_by_dt=self.cfg.scale_rewards_by_dt
+      self.cfg.rewards,
+      self,
+      scale_by_dt=self.cfg.scale_rewards_by_dt,
+      only_positive=self.cfg.only_positive_rewards,
     )
     print_info(f"[INFO] {self.reward_manager}")
     if len(self.cfg.curriculum) > 0:

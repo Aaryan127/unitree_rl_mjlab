@@ -132,6 +132,10 @@ class RslRlPpoActorCriticWildCfg(RslRlPpoActorCriticCfg):
   """Size of the encoded privileged state."""
   height_encoder_dims: Tuple[int, ...] = (128, 64)
   privileged_encoder_dims: Tuple[int, ...] = (64, 32)
+  max_noise_std: float | None = None
+  """Upper bound on the action noise std (None = unbounded). Joint targets are clipped
+  to the joint limits, so noise past them costs nothing and the entropy bonus keeps
+  growing it."""
   class_name: str = "ActorCriticWild"
 
 
