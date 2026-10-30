@@ -5,9 +5,11 @@ from mjlab.tasks.velocity.rl import VelocityOnPolicyRunner
 from .env_cfgs import (
   unitree_go2_flat_env_cfg,
   unitree_go2_pgtt_env_cfg,
+  unitree_go2_pgtt_repro_env_cfg,
   unitree_go2_rough_env_cfg,
 )
 from .rl_cfg import (
+  unitree_go2_pgtt_repro_runner_cfg,
   unitree_go2_pgtt_student_runner_cfg,
   unitree_go2_pgtt_teacher_runner_cfg,
   unitree_go2_ppo_runner_cfg,
@@ -45,4 +47,13 @@ register_mjlab_task(
   play_env_cfg=unitree_go2_pgtt_env_cfg(play=True),
   rl_cfg=unitree_go2_pgtt_student_runner_cfg(),  # type: ignore[arg-type]
   runner_cls=DistillationRunner,
+)
+
+# The official PGTT training setup reproduced (flat ground): the known-good baseline.
+register_mjlab_task(
+  task_id="Mjlab-Velocity-PGTT-Repro-Unitree-Go2",
+  env_cfg=unitree_go2_pgtt_repro_env_cfg(),
+  play_env_cfg=unitree_go2_pgtt_repro_env_cfg(play=True),
+  rl_cfg=unitree_go2_pgtt_repro_runner_cfg(),
+  runner_cls=OnPolicyRunner,
 )

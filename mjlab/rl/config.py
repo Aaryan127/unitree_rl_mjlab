@@ -136,6 +136,9 @@ class RslRlPpoActorCriticWildCfg(RslRlPpoActorCriticCfg):
   """Upper bound on the action noise std (None = unbounded). Joint targets are clipped
   to the joint limits, so noise past them costs nothing and the entropy bonus keeps
   growing it."""
+  squashed_entropy: bool = False
+  """Entropy bonus on the tanh-squashed action (Brax PPO) instead of the raw Gaussian.
+  Use with the env's squash_actions."""
   class_name: str = "ActorCriticWild"
 
 

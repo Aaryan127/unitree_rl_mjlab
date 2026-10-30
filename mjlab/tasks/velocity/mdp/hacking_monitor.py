@@ -15,6 +15,7 @@ command shows up even when the reward curve looks fine:
   standing_drift     speed of robots commanded to stand [m/s]
   action_jitter      mean |a_t - a_(t-1)| over the joints (tanh-bounded actions: a smooth
                      gait ~0.05, slamming the joints back and forth ~2)
+  action_saturation  fraction of tanh-bounded actions beyond +-0.95 (bang-bang control)
 
 `hacking_monitor` logs them every step as Metrics/hack/* (it is a reward term that always
 returns 0, so it never changes training); scripts/check_reward_hacking.py calls
@@ -70,6 +71,7 @@ def behaviour_metrics(
   out["standing_drift"] = torch.where(standing, vel_xy.norm(dim=-1), nan)
   actions = env.action_manager
   out["action_jitter"] = (actions.action - actions.prev_action).abs().mean(-1)
+  out["action_saturation"] = (actions.action.abs() > 0.95).float().mean(-1)
   return out
 
 

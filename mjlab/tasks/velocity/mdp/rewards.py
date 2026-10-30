@@ -601,6 +601,63 @@ class foot_phase_tracking(_GaitFeetTerm):
     return torch.exp(-torch.sum(error, dim=1) / sigma)
 
 
+class foot_phase_tracking_body(_GaitFeetTerm):
+  """PGTT foot-phase reward as the official code computes it.
+
+  Same exp(-sum_i (p_des_i - p_i)^2 / sigma) as `foot_phase_tracking`, but p_i is the
+  foot height relative to `ref_site` (the IMU) in the body frame, as PGTT's framepos
+  sensors measure it. Stance then means "feet `stance_height` below the body" (-0.30 m
+  in PGTT), so planting the feet only scores when the body is at walking height, and
+  lying or crouching low loses the reward.
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+    asset: Entity = env.scene[cfg.params["asset_cfg"].name]
+    ref_ids, _ = asset.find_sites(cfg.params["ref_site"])
+    self.ref_id = ref_ids[0]
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    command_name: str,
+    sensor_name: str,
+    ref_site: str,
+    stance_height: float,
+    swing_height: float,
+    sigma: float,
+    terrain_radius: float,
+    max_terrain_delta: float,
+    asset_cfg: SceneEntityCfg,
+  ) -> torch.Tensor:
+    del ref_site  # Resolved in __init__.
+    asset: Entity = env.scene[asset_cfg.name]
+    gait = env.command_manager.get_term(command_name)
+    sites = asset.data.site_pos_w
+    rel_w = sites[:, self.site_ids] - sites[:, self.ref_id].unsqueeze(1)
+    quat = asset.data.root_link_quat_w.unsqueeze(1).expand(-1, rel_w.shape[1], -1)
+    foot_height = quat_apply_inverse(quat, rel_w)[..., 2]
+
+    _, _, z_max, z_min = _foot_terrain(
+      env, self.site_ids, sensor_name, terrain_radius, asset_cfg.name
+    )
+    delta = torch.clamp(z_max - z_min, 0.0, max_terrain_delta)
+    target = desired_foot_height(gait.phase, delta, stance_height, swing_height)
+    error = torch.square(target - foot_height)
+
+    log = env.extras["log"]
+    log["Metrics/foot_height_error"] = torch.mean(torch.sqrt(error))
+    return torch.exp(-torch.sum(error, dim=1) / sigma)
+
+
+def torques_pgtt(
+  env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG
+) -> torch.Tensor:
+  """PGTT torque cost: |tau|_2 + |tau|_1."""
+  tau = env.scene[asset_cfg.name].data.actuator_force
+  return torch.norm(tau, dim=1) + torch.sum(torch.abs(tau), dim=1)
+
+
 ##
 # Optional terrain-aware and regularization terms (from the cpu branch and Miki et al.
 # 2022, with the cpu-branch bugs fixed). They are registered with weight 0 in

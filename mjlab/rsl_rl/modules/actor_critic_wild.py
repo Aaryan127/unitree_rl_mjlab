@@ -17,6 +17,7 @@ import os
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions import Normal
 
 from mjlab.rsl_rl.networks import MLP, EmpiricalNormalization
@@ -47,6 +48,7 @@ class ActorCriticWild(nn.Module):
     init_noise_std=1.0,
     noise_std_type: str = "scalar",
     max_noise_std: float | None = None,
+    squashed_entropy: bool = False,
     height_latent_dim: int = 32,
     privileged_latent_dim: int = 16,
     height_encoder_dims=(128, 64),
@@ -94,6 +96,7 @@ class ActorCriticWild(nn.Module):
 
     self.noise_std_type = noise_std_type
     self.max_noise_std = max_noise_std
+    self.squashed_entropy = squashed_entropy
     if noise_std_type == "scalar":
       self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
     elif noise_std_type == "log":
@@ -133,7 +136,15 @@ class ActorCriticWild(nn.Module):
 
   @property
   def entropy(self):
-    return self.distribution.entropy().sum(dim=-1)
+    entropy = self.distribution.entropy()
+    if self.squashed_entropy:
+      # Entropy of the executed action tanh(z) (the env squashes, see squash_actions),
+      # as Brax PPO computes it: H(z) + log(1 - tanh(z)^2) at one reparameterised sample.
+      # Without the second term the bonus ignores saturation: it pushes the std up
+      # forever and lets the mean sit where every action is +-1.
+      z = self.distribution.rsample()
+      entropy = entropy + 2.0 * (math.log(2.0) - z - F.softplus(-2.0 * z))
+    return entropy.sum(dim=-1)
 
   def update_distribution(self, obs):
     mean = self.actor(*self.get_actor_obs(obs))

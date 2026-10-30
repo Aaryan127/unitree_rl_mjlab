@@ -66,7 +66,10 @@ class UniformVelocityCommand(CommandTerm):
     self.vel_command_b[env_ids, 0] = r.uniform_(*self.cfg.ranges.lin_vel_x)
     self.vel_command_b[env_ids, 1] = r.uniform_(*self.cfg.ranges.lin_vel_y)
     self.vel_command_b[env_ids, 2] = r.uniform_(*self.cfg.ranges.ang_vel_z)
-    self.vel_command_b[env_ids, :] *= (torch.norm(self.vel_command_b[env_ids, :], dim=1) > 0.1).unsqueeze(1)
+    if self.cfg.axis_nonzero_prob is not None:
+      prob = torch.tensor(self.cfg.axis_nonzero_prob, device=self.device)
+      self.vel_command_b[env_ids, :] *= torch.bernoulli(prob.expand(len(env_ids), 3))
+    self.vel_command_b[env_ids, :] *=(torch.norm(self.vel_command_b[env_ids, :], dim=1) > 0.1).unsqueeze(1)
     if self.cfg.heading_command:
       assert self.cfg.ranges.heading is not None
       self.heading_target[env_ids] = r.uniform_(*self.cfg.ranges.heading)
@@ -183,6 +186,9 @@ class UniformVelocityCommandCfg(CommandTermCfg):
   rel_standing_envs: float = 0.0
   rel_heading_envs: float = 1.0
   init_velocity_prob: float = 0.0
+  axis_nonzero_prob: tuple[float, float, float] | None = None
+  """Probability that each of (vx, vy, wz) is non-zero after a resample; the others are
+  set to 0. PGTT: (0.9, 0.25, 0.5), so most commands are forward walking. None = all."""
 
   @dataclass
   class Ranges:

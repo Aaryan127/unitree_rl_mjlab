@@ -75,6 +75,34 @@ class AuditRegressionTests(unittest.TestCase):
     policy.reset(torch.tensor([True, False]))
     self.assertTrue(torch.all(policy.hidden_states[:, 0] == 0))
 
+  def test_squashed_entropy_penalizes_saturation(self):
+    """Brax-style entropy of tanh(z): saturating the mean lowers it, a raw Gaussian
+    entropy would not notice (flat_v4 went bang-bang with std pinned at its cap)."""
+    from tensordict import TensorDict
+    from mjlab.rsl_rl.modules.actor_critic_wild import ActorCriticWild
+    obs = TensorDict({k: torch.randn(4096, 5) for k in ("p", "h", "x", "c")}, batch_size=[4096])
+    groups = {"policy": ["p"], "height": ["h"], "privileged": ["x"], "critic": ["c"]}
+    with contextlib.redirect_stdout(io.StringIO()):
+      policy = ActorCriticWild(obs, groups, 12, squashed_entropy=True, noise_std_type="log",
+                               init_noise_std=1.0, height_encoder_dims=(8,), privileged_encoder_dims=(8,),
+                               height_latent_dim=4, privileged_latent_dim=4)
+    policy.update_distribution(obs)
+    mean = policy.distribution.mean.detach()
+    torch.manual_seed(0)
+    policy.distribution = torch.distributions.Normal(torch.zeros_like(mean), torch.ones_like(mean))
+    centred = policy.entropy.mean()
+    policy.distribution = torch.distributions.Normal(torch.full_like(mean, 3.0), torch.ones_like(mean))
+    saturated = policy.entropy.mean()
+    # Per dimension: 0.67 nats centred vs -3.2 saturated (raw Gaussian: 1.42 for both).
+    self.assertAlmostEqual(centred.item() / 12, 0.669, delta=0.02)
+    self.assertLess(saturated.item() / 12, -3.0)
+    # On average (one sample per action, as in Brax) the entropy gradient pulls a
+    # saturated mean back towards 0: d/dmu ~ -2 per dimension.
+    mu = torch.full_like(mean, 3.0).requires_grad_()
+    policy.distribution = torch.distributions.Normal(mu, torch.ones_like(mean))
+    policy.entropy.sum().backward()
+    self.assertAlmostEqual(mu.grad.mean().item(), -1.94, delta=0.05)
+
 
 if __name__ == "__main__":
   unittest.main()

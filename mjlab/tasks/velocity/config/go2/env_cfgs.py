@@ -11,6 +11,9 @@ from mjlab.actuator.delayed_actuator import DelayedActuatorCfg
 from mjlab.asset_zoo.robots.unitree_go2 import go2_constants
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
+from mjlab.managers.event_manager import EventTermCfg
+from mjlab.managers.reward_manager import RewardTermCfg
+from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.sensor import (
   ContactMatch,
@@ -21,10 +24,12 @@ from mjlab.sensor import (
   RayCastSensorCfg,
 )
 from mjlab.tasks.velocity import mdp
+from mjlab.tasks.velocity.terrain_profiles import set_terrain_profile
 from mjlab.tasks.velocity.velocity_env_cfg import (
   make_pgtt_env_cfg,
   make_velocity_env_cfg,
 )
+from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
 
 def unitree_go2_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
@@ -331,4 +336,150 @@ def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       cfg.scene.terrain.terrain_generator.num_rows = 5
       cfg.scene.terrain.terrain_generator.border_width = 10.0
 
+  return cfg
+
+
+##
+# PGTT reproduction: the official PGTT training setup, as close as mjlab allows.
+##
+
+
+def _go2_spec_pgtt_joints() -> mujoco.MjSpec:
+  """Go2 with PGTT's passive joint damping (= Kd, 0.5; our XML has 0.1)."""
+  spec = _go2_spec_with_named_calves()
+  for joint in spec.joints:
+    if joint.type != mujoco.mjtJoint.mjJNT_FREE:
+      joint.damping = 0.5
+  return spec
+
+
+def unitree_go2_pgtt_repro_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """The official PGTT Go2 training config (github.com/NtagkasAlex/
+  phase_guided_terrain_traversal, method "pgtt", task flat_terrain), ported to mjlab.
+
+  A known-good baseline: v1-v4 of our teacher changed many things at once and never
+  learned to walk, so this reproduces what is published to walk, and every extra
+  (full collisions, delays, pushes, our reward terms) is then added one at a time.
+  Same observation groups as the PGTT teacher, so the same network trains on it.
+
+  Differences from the official code that remain: rsl_rl PPO instead of Brax PPO
+  (hyperparameters matched in rl_cfg), 4096 robots instead of 8192, one global learned
+  std instead of a state-dependent one, random initial gait phase, the teacher's extra
+  observations (history, privileged state).
+  """
+  cfg = unitree_go2_pgtt_env_cfg(play=play)
+  set_terrain_profile(cfg, "flat")
+
+  # Robot: feet-only collisions (scene_mjx_feetonly.xml), Kp 40 with actuator Kd 0.5 plus
+  # passive joint damping 0.5, no actuator delay.
+  go2 = cfg.scene.entities["robot"]
+  cfg.scene.entities = {
+    "robot": replace(
+      go2,
+      collisions=(go2_constants.FEET_ONLY_COLLISION,),
+      spec_fn=_go2_spec_pgtt_joints,
+      articulation=replace(
+        go2.articulation,
+        actuators=(
+          replace(go2_constants.GO2_ACTUATOR_GO2HV, stiffness=40.0, damping=0.5),
+        ),
+      ),
+    )
+  }
+  # Only flipping over ends an episode.
+  cfg.terminations.pop("body_contact", None)
+
+  # Observations: PGTT noise (joint_pos +-0.03), no sensor delays.
+  for group in cfg.observations.values():
+    for term in group.terms.values():
+      term.delay_min_lag = term.delay_max_lag = 0
+  for group in ("policy", "proprio_history"):
+    terms = cfg.observations[group].terms
+    key = "joint_pos" if "joint_pos" in terms else "joint_pos_history"
+    terms[key].noise = Unoise(n_min=-0.03, n_max=0.03)
+
+  # Commands: uniform in [-1, 1], each axis non-zero with probability (0.9, 0.25, 0.5),
+  # resampled every ~5 s.
+  twist = cfg.commands["twist"]
+  twist.axis_nonzero_prob = (0.9, 0.25, 0.5)  # type: ignore[attr-defined]
+  twist.rel_standing_envs = 0.0  # type: ignore[attr-defined]
+  twist.resampling_time_range = (2.0, 8.0)
+
+  # Events: PGTT's domain_randomize_simple; no pushes, no motor delay.
+  for name in ("push_robot", "external_wrench", "effort_limits", "actuator_delay",
+               "joint_friction", "encoder_bias"):
+    cfg.events.pop(name, None)
+  cfg.events["reset_base"].params = {
+    "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-3.14, 3.14)},
+    "velocity_range": {k: (-0.1, 0.1) for k in ("x", "y", "z", "roll", "pitch", "yaw")},
+  }
+  cfg.events["reset_robot_joints"].params["position_range"] = (0.0, 0.0)
+  if "body_friction" in cfg.events:
+    cfg.events["body_friction"].params["ranges"] = (0.4, 1.0)
+  if "base_mass" in cfg.events:
+    cfg.events["base_mass"].params["ranges"] = (-1.0, 1.0)
+  if "joint_armature" in cfg.events:
+    cfg.events["joint_armature"].params["ranges"] = (1.0, 1.05)
+  if "pd_gains" in cfg.events:
+    cfg.events["pd_gains"].params["kp_range"] = (0.9, 1.1)
+    cfg.events["pd_gains"].params["kd_range"] = (1.0, 1.0)
+  if not play:
+    cfg.events["joint_damping"] = EventTermCfg(
+      mode="startup",
+      func=mdp.randomize_field,
+      domain_randomization=True,
+      params={
+        "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+        "operation": "scale",
+        "field": "dof_damping",
+        "ranges": (0.9, 1.1),
+      },
+    )
+
+  # Rewards: exactly PGTT's (robots/go2 default_config + joystick_base._get_reward).
+  # mjlab multiplies each by dt and clips the step's sum at 0, as PGTT does.
+  hips_only = cfg.rewards["default_pose"]
+  hips_only.weight = -0.5
+  monitor = cfg.rewards["hacking_monitor"]
+  cfg.rewards = {
+    "track_lin_vel": RewardTermCfg(
+      func=mdp.track_lin_vel_xy_exp, weight=1.0, params={"command_name": "twist", "sigma": 0.25}
+    ),
+    "track_ang_vel": RewardTermCfg(
+      func=mdp.track_ang_vel_z_exp, weight=0.5, params={"command_name": "twist", "sigma": 0.25}
+    ),
+    "lin_vel_z": RewardTermCfg(func=mdp.lin_vel_z_l2, weight=-2.0),
+    "ang_vel_xy": RewardTermCfg(func=mdp.ang_vel_xy_l2, weight=-0.05),
+    "default_pose": hips_only,
+    # PGTT: -1 inside the clip (-0.02 per episode end); ours is added after the clip.
+    # Either way the cost of falling is the positive reward the robot no longer gets.
+    "termination": RewardTermCfg(func=mdp.is_terminated, weight=-1.0),
+    "torques": RewardTermCfg(func=mdp.torques_pgtt, weight=-2e-6),
+    "action_rate": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.001),
+    "foot_phase": RewardTermCfg(
+      func=mdp.foot_phase_tracking_body,
+      weight=1.0,
+      params={
+        "command_name": "gait",
+        "sensor_name": "height_scanner",
+        "ref_site": "imu",
+        # Feet 0.30 m below the IMU in stance, 0.20 m (+ terrain step) at the apex.
+        "stance_height": -0.30,
+        "swing_height": -0.20,
+        "sigma": 0.05,
+        "terrain_radius": 0.15,
+        "max_terrain_delta": 0.15,
+        "asset_cfg": SceneEntityCfg("robot"),
+      },
+    ),
+    "swing_contact": RewardTermCfg(
+      func=mdp.swing_foot_contact,
+      weight=-0.25,
+      params={"sensor_name": "feet_ground_contact", "command_name": "gait"},
+    ),
+    "hacking_monitor": monitor,
+  }
+  # No reward curriculum in PGTT.
+  for name in [n for n in cfg.curriculum if n.startswith("ramp_")]:
+    cfg.curriculum.pop(name)
   return cfg

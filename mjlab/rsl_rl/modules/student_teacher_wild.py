@@ -57,7 +57,7 @@ class StudentTeacherWild(nn.Module):
     init_noise_std: float = 0.1,
     **kwargs,
   ):
-    unused = {k: v for k, v in kwargs.items() if k not in ("critic_obs_normalization", "critic_hidden_dims", "noise_std_type", "max_noise_std")}
+    unused = {k: v for k, v in kwargs.items() if k not in ("critic_obs_normalization", "critic_hidden_dims", "noise_std_type", "max_noise_std", "squashed_entropy")}
     if unused:
       print(f"StudentTeacherWild ignores unexpected arguments: {list(unused.keys())}")
     super().__init__()

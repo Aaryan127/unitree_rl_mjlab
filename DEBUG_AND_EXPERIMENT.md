@@ -368,6 +368,7 @@ Live, in TensorBoard during training: `Metrics/hack/*` (logged by the zero-weigh
 | `Train/mean_episode_length` | rises to ~1000 and stays | drops to tens of steps: falls on purpose |
 | `Policy/mean_noise_std` | falls below 1 | climbs (capped at 1.0 now): flails |
 | `Metrics/hack/action_jitter` | ~0.05–0.2 | above 0.8: joints slammed back and forth (vibration) |
+| `Metrics/hack/action_saturation` | below 0.2 | above 0.5: actions stuck at ±1 (bang-bang control, flat_v4) |
 
 The second flat teacher walked by iteration 500 and then learned to fall within a second: its
 noise std reached 2.5, and once the penalty ramp finished, staying alive cost more per second

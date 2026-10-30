@@ -80,7 +80,9 @@ class RslRlVecEnvWrapper(VecEnv):
     assert isinstance(term_or_trunc, torch.Tensor)
     dones = term_or_trunc.to(dtype=torch.long)
     if not self.cfg.is_finite_horizon:
-      extras["time_outs"] = truncated
+      # A robot that fails on its last step is a failure, not a time-out: PPO must not
+      # bootstrap the value of continuing it.
+      extras["time_outs"] = truncated & ~terminated
     return (
       TensorDict(obs_dict, batch_size=[self.num_envs]),
       rew,

@@ -113,3 +113,38 @@ def unitree_go2_pgtt_student_runner_cfg() -> RslRlDistillationRunnerCfg:
     num_steps_per_env=24,
     max_iterations=5000,
   )
+
+
+def unitree_go2_pgtt_repro_runner_cfg() -> RslRlOnPolicyRunnerCfg:
+  """PGTT teacher on the reproduced official setup, with Brax PPO's settings
+  (PGTT train.py: gamma 0.97, lr 3e-4 fixed, 8 epochs, clip 0.3, entropy 0.01 on the
+  tanh-squashed action, unroll 20, value loss 0.5, initial std softplus(0) ~ 0.7)."""
+  return RslRlOnPolicyRunnerCfg(
+    policy=RslRlPpoActorCriticWildCfg(
+      init_noise_std=0.7,
+      noise_std_type="log",
+      squashed_entropy=True,
+      actor_hidden_dims=(512, 256, 128),
+      critic_hidden_dims=(512, 256, 128),
+      activation="elu",
+    ),
+    algorithm=RslRlPpoAlgorithmCfg(
+      value_loss_coef=0.5,
+      use_clipped_value_loss=True,
+      clip_param=0.3,
+      entropy_coef=0.01,
+      num_learning_epochs=8,
+      num_mini_batches=4,
+      learning_rate=3.0e-4,
+      schedule="fixed",
+      gamma=0.97,
+      lam=0.95,
+      desired_kl=0.01,
+      max_grad_norm=1.0,
+    ),
+    obs_groups=PGTT_TEACHER_OBS_GROUPS,
+    experiment_name="go2_pgtt_repro",
+    save_interval=100,
+    num_steps_per_env=20,
+    max_iterations=3000,
+  )
