@@ -520,7 +520,10 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
     "joint_pos": JointPositionActionCfg(
       entity_name="robot",
       actuator_names=(".*",),
-      scale=0.25,
+      # Official PGTT: target = default + 0.5 * action, action in [-1, 1] (tanh, see
+      # squash_actions below), so targets stay within 0.5 rad of the standing pose and
+      # inside the Go2 joint limits. The clamp is a safety net that never binds.
+      scale=0.5,
       use_default_offset=True,
       clip_to_joint_limits=True,
     )
@@ -631,7 +634,7 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
     # Sim-to-real robustness (motor and model uncertainty). Robot-specific names are set
     # in config/<robot>/env_cfgs.py.
     ##
-    "pd_gains": EventTermCfg(  # real motors' effective kp/kd differ from the nominal 20/1
+    "pd_gains": EventTermCfg(  # real motors' effective kp/kd differ from the nominal ones
       func=mdp.randomize_pd_gains,
       mode="reset",
       model_fields=("actuator_gainprm", "actuator_biasprm"),
@@ -692,21 +695,28 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   ##
-  # Rewards (based on PGTT Table I). mjlab multiplies every term by dt, so only the
-  # ratios between weights matter.
+  # Rewards. Base: the official PGTT code (github.com/NtagkasAlex/
+  # phase_guided_terrain_traversal), plus terms for what our full-collision Go2 can do
+  # and PGTT's feet-only collision model cannot (lie down, kneel). mjlab multiplies
+  # every term by dt; each step's sum is clipped at 0 (only_positive_rewards, as PGTT
+  # does) and actions are tanh-bounded (squash_actions, as Brax PPO does).
   #
-  # Balance (per second, flat, measured with scripted behaviours): with the original
-  # PGTT weights, standing still earned +3.2 (foot_phase +3.4 of its max 4.0: planted
-  # feet already match the stance height and most of the swing curve), while perfect
-  # tracking could add only +1.1 on top. The teacher drifted to lying down and paddling
-  # its legs. Tracking is now the largest term, foot_phase shapes the gait instead of
-  # paying for standing, and lying / crouching / falling cost something.
+  # Design (per second):
+  #  - the task leads: tracking max 3.0 vs gait shaping (foot_phase) max 1.0;
+  #  - penalties stay small on a good gait (~0.1-0.3), so the clip rarely binds and
+  #    their signal is kept; bounded actions keep them from exploding;
+  #  - lying down ends the episode (body_contact), crouching and kneeling cost
+  #    (base_height, leg_contact), a fall costs -2 after the clip;
+  #  - smoothness/energy penalties ramp from 10 % over 1500 iterations (Miki 2022).
+  # History: v1 lay down and paddled (planted feet paid most of a per-foot foot_phase),
+  # v2 fell on purpose (living cost more than one fall), v3 vibrated between the joint
+  # limits (unbounded actions; the clip then hid action_rate).
   ##
 
   rewards = {
     "track_lin_vel": RewardTermCfg(
       func=mdp.track_lin_vel_xy_exp,
-      weight=2.0,  # PGTT: 1.0
+      weight=2.0,  # PGTT 1.0. x2 so the task clearly beats stepping in place
       params={"command_name": "twist", "sigma": 0.25},
     ),
     "track_ang_vel": RewardTermCfg(
@@ -716,10 +726,10 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "lin_vel_z": RewardTermCfg(func=mdp.lin_vel_z_l2, weight=-2.0),
     "ang_vel_xy": RewardTermCfg(func=mdp.ang_vel_xy_l2, weight=-0.05),
-    "orientation": RewardTermCfg(func=mdp.flat_orientation_l2, weight=-0.2),
-    # Per episode end (not time-out). Scaled by dt like everything else, so -1 was a
-    # 0.02 penalty; -100 = -2, about half a second of good walking, on top of the lost
-    # future reward. Added after the only_positive_rewards clip, so it always applies.
+    "orientation": RewardTermCfg(func=mdp.flat_orientation_l2, weight=-0.2),  # PGTT 0
+    # Per episode end (not time-out): -100 x dt = -2, on top of the lost future reward.
+    # Added after the only_positive_rewards clip, so it always applies (PGTT has it
+    # inside the clip, where it does almost nothing).
     "termination": RewardTermCfg(func=mdp.is_terminated, weight=-100.0),
     # Base below 0.25 m above the terrain (walks at ~0.27-0.30): -50 * (0.25 - h)^2,
     # e.g. -0.8/s at 0.12 m. One-sided, so standing taller is not rewarded.
@@ -729,9 +739,11 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
       params={"sensor_name": "height_scanner", "target": 0.25},
     ),
     "joint_power": RewardTermCfg(func=mdp.joint_power, weight=-2e-5),
+    # On tanh-bounded actions: vibrating +-1 every step costs 0.48/s, a smooth gait
+    # < 0.01/s. PGTT's -0.001 would make vibration free.
     "action_rate": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.01),
-    "joint_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-1.0),
-    "default_pose": RewardTermCfg(
+    "joint_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-1.0),  # PGTT 0
+    "default_pose": RewardTermCfg(  # PGTT: hips only (per-robot weights)
       func=mdp.weighted_default_pose,
       weight=-0.5,
       params={
@@ -740,22 +752,23 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
       },
     ),
     "joint_torques": RewardTermCfg(func=mdp.joint_torques_l2, weight=-1e-5),
-    "foot_phase": RewardTermCfg(  # summed over 4 feet: max 4 x weight
+    "foot_phase": RewardTermCfg(  # exp of the error summed over the 4 feet: max 1.0
       func=mdp.foot_phase_tracking,
-      weight=0.5,  # PGTT: 1.0
+      weight=1.0,  # PGTT
       params={
         "command_name": "gait",
         "sensor_name": "height_scanner",
         "stance_height": 0.0,  # Set per-robot (foot site height when standing).
         "swing_height": 0.08,
-        # PGTT's sigma_f = 0.05 is read as a 5 cm standard deviation.
-        "sigma": 0.05**2,
+        # PGTT code: 0.05 m^2 on the summed squared error. Loose: all four feet 5 cm
+        # off still scores 0.82; the gait timing is enforced by swing_contact.
+        "sigma": 0.05,
         "terrain_radius": 0.15,
         "max_terrain_delta": 0.15,
         "asset_cfg": SceneEntityCfg("robot"),
       },
     ),
-    "swing_contact": RewardTermCfg(
+    "swing_contact": RewardTermCfg(  # PGTT "contact" (0.25 x -feet down in swing)
       func=mdp.swing_foot_contact,
       weight=-0.25,
       params={"sensor_name": "feet_ground_contact", "command_name": "gait"},
@@ -893,8 +906,12 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     decimation=4,
     episode_length_s=20.0,
-    # The first flat_v2 teacher walked by iteration 500, then the penalty ramp pushed the
-    # summed reward below 0 and it learned to fall within a second (-2 once) instead of
-    # paying for 20 s. See ManagerBasedRlEnvCfg.only_positive_rewards.
+    # flat_v2 walked by iteration 500, then the penalty ramp pushed the summed reward
+    # below 0 and it learned to fall within a second instead of paying for 20 s. PGTT
+    # clips the same way. See ManagerBasedRlEnvCfg.only_positive_rewards.
     only_positive_rewards=True,
+    # flat_v3 (unbounded Gaussian, targets clamped to the joint limits) learned to slam
+    # its joints between the limits: outputs past them were free. Brax PPO, which PGTT
+    # trained with, squashes actions with tanh; so do we.
+    squash_actions=True,
   )

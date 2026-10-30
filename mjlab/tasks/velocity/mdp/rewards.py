@@ -563,8 +563,10 @@ class _GaitFeetTerm:
 
 
 class foot_phase_tracking(_GaitFeetTerm):
-  """PGTT foot-phase reward: sum_i exp(-(p_des_i - p_i)^2 / sigma).
+  """PGTT foot-phase reward: exp(-sum_i (p_des_i - p_i)^2 / sigma), in [0, 1].
 
+  As in the official PGTT code: one exponential of the error summed over the feet, so
+  the reward is high only when all feet follow their phase, and sigma is in m^2 (0.05).
   p_i is the foot height above the ground directly under the foot, and p_des_i comes
   from `desired_foot_height` with dH_i = (max - min) terrain height within
   `terrain_radius` of the foot. Both are measured with the height-scan rays, so the
@@ -596,7 +598,7 @@ class foot_phase_tracking(_GaitFeetTerm):
     log = env.extras["log"]
     log["Metrics/foot_height_error"] = torch.mean(torch.sqrt(error))
     log["Metrics/terrain_delta_mean"] = torch.mean(delta)
-    return torch.sum(torch.exp(-error / sigma), dim=1)
+    return torch.exp(-torch.sum(error, dim=1) / sigma)
 
 
 ##

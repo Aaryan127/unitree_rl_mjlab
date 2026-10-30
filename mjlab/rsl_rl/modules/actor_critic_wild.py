@@ -173,10 +173,10 @@ class ActorCriticWild(nn.Module):
     super().load_state_dict(state_dict, strict=strict)
     return True  # training resumes
 
-  def export_onnx(self, path: str, filename: str = "teacher.onnx") -> None:
+  def export_onnx(self, path: str, filename: str = "teacher.onnx", squash: bool = False) -> None:
     """Export the teacher actor (for inspection only; it needs privileged inputs)."""
     os.makedirs(path, exist_ok=True)
-    actor = _TeacherOnnx(self.actor).to("cpu").eval()
+    actor = _TeacherOnnx(self.actor, squash).to("cpu").eval()
     torch.onnx.export(
       actor,
       (
@@ -194,11 +194,13 @@ class ActorCriticWild(nn.Module):
 
 
 class _TeacherOnnx(nn.Module):
-  def __init__(self, teacher: TeacherMLP):
+  def __init__(self, teacher: TeacherMLP, squash: bool = False):
     super().__init__()
     import copy
 
     self.teacher = copy.deepcopy(teacher)
+    self.squash = squash
 
   def forward(self, proprio, height, privileged):
-    return self.teacher(proprio, height, privileged)
+    actions = self.teacher(proprio, height, privileged)
+    return torch.tanh(actions) if self.squash else actions

@@ -163,10 +163,13 @@ def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   # Go2 with named calf geoms and DELAYED actuators: the position target can reach the
   # motor 0-20 ms late (sampled per episode by the actuator_delay event), as on the real
-  # robot where commands travel over DDS.
+  # robot where commands travel over DDS. Gains from the official PGTT training config
+  # (Kp 40, Kd 0.5; the stock Go2 task uses 20 / 1); the export writes them to deploy.yaml.
   go2 = get_go2_robot_cfg()
   delayed = DelayedActuatorCfg(
-    base_cfg=go2_constants.GO2_ACTUATOR_GO2HV, delay_target="position", delay_max_lag=4
+    base_cfg=replace(go2_constants.GO2_ACTUATOR_GO2HV, stiffness=40.0, damping=0.5),
+    delay_target="position",
+    delay_max_lag=4,
   )
   cfg.scene.entities = {
     "robot": replace(
@@ -294,10 +297,12 @@ def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   privileged["foot_friction"].params["asset_cfg"].geom_names = foot_geoms
   privileged["base_external_wrench"].params["asset_cfg"].body_names = ("base_link",)
 
+  # Hips only, as in PGTT: keeps the legs from splaying sideways without fighting the
+  # thigh/calf motion that foot_phase asks for (large on stairs).
   cfg.rewards["default_pose"].params["weights"] = {
     r".*_hip_joint": 1.0,
-    r".*_thigh_joint": 0.25,
-    r".*_calf_joint": 0.25,
+    r".*_thigh_joint": 0.0,
+    r".*_calf_joint": 0.0,
   }
   # Foot site is the center of the 2.2 cm foot sphere, so it sits 2.2 cm above the
   # ground when standing.

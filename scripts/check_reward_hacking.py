@@ -57,6 +57,7 @@ CHECKS = [
   ("speed_ratio", lambda v: v < 0.8, lambda v: v < 0.5, "fraction of the commanded speed achieved"),
   ("feet_down_moving", lambda v: v > 0.5, lambda v: v > 0.8, "all feet down while moving: shuffling/sliding"),
   ("standing_drift", lambda v: v > 0.15, lambda v: v > 0.3, "moving when told to stand [m/s]"),
+  ("action_jitter", lambda v: v > 0.3, lambda v: v > 0.8, "action change per step: vibrating joints"),
   ("falls_per_min", lambda v: v > 0.2, lambda v: v > 1.0, "episodes ended early, per robot-minute"),
 ]
 

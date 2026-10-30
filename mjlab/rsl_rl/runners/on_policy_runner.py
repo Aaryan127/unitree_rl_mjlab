@@ -334,7 +334,8 @@ class OnPolicyRunner:
         policy_path = path.split("model")[0]
         if hasattr(self.alg.policy, "export_onnx"):
             # Custom modules (ActorCriticWild, StudentTeacherWild) know their own inputs.
-            self.alg.policy.export_onnx(policy_path)
+            squash = getattr(self.env.unwrapped.cfg, "squash_actions", False)
+            self.alg.policy.export_onnx(policy_path, squash=squash)
         else:
             export_policy_as_onnx(
                 policy=self.alg.policy,

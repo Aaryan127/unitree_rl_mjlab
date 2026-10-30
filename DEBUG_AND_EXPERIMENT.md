@@ -367,11 +367,18 @@ Live, in TensorBoard during training: `Metrics/hack/*` (logged by the zero-weigh
 | `Episode_Termination/body_contact` | falls over training | stays high: keeps lying down |
 | `Train/mean_episode_length` | rises to ~1000 and stays | drops to tens of steps: falls on purpose |
 | `Policy/mean_noise_std` | falls below 1 | climbs (capped at 1.0 now): flails |
+| `Metrics/hack/action_jitter` | ~0.05–0.2 | above 0.8: joints slammed back and forth (vibration) |
 
 The second flat teacher walked by iteration 500 and then learned to fall within a second: its
 noise std reached 2.5, and once the penalty ramp finished, staying alive cost more per second
 than one fall. The PGTT env now clips each step's summed reward at 0 (`only_positive_rewards`,
 termination added after the clip) and the teacher's noise std is capped at 1.0.
+
+The third (flat_v3) vibrated: with an unbounded Gaussian and joint targets clamped to the
+limits, huge outputs were free, and once that made the step's sum negative the clip hid
+`action_rate`. Actions are now tanh-bounded (`squash_actions`, as in the official PGTT code),
+so vibrating costs ~0.5/s and can never be free. Gains, action scale and the foot-phase
+formula follow the official PGTT code too.
 
 On a checkpoint (CPU, works on old checkpoints too), with an OK / WARN / HACK verdict per check
 and which reward terms the score comes from:

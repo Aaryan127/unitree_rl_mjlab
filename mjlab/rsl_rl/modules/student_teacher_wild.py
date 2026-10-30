@@ -236,16 +236,17 @@ class StudentTeacherWild(nn.Module):
   def student_obs_dim(self) -> int:
     return self.student.proprio_dim + self.student.height_dim
 
-  def export_onnx(self, path: str, filename: str = "policy.onnx") -> None:
+  def export_onnx(self, path: str, filename: str = "policy.onnx", squash: bool = False) -> None:
     """Export the deployable student.
 
     inputs:  obs   [1, proprio + height]  (deploy.yaml observation order)
              h_in  [rnn_layers, 1, rnn_hidden]
     outputs: actions [1, num_actions], h_out [rnn_layers, 1, rnn_hidden]
-    The C++ runner feeds h_out back as h_in on the next step.
+    The C++ runner feeds h_out back as h_in on the next step. squash=True ends the graph
+    with tanh, for envs trained with squash_actions.
     """
     os.makedirs(path, exist_ok=True)
-    model = StudentOnnxWrapper(self.student).to("cpu").eval()
+    model = StudentOnnxWrapper(self.student, squash).to("cpu").eval()
     h_in = torch.zeros(self.student.rnn_num_layers, 1, self.student.rnn_hidden_dim)
     torch.onnx.export(
       model,
@@ -262,13 +263,16 @@ class StudentTeacherWild(nn.Module):
 class StudentOnnxWrapper(nn.Module):
   """Single-step deployable student: (obs, h_in) -> (actions, h_out)."""
 
-  def __init__(self, student: StudentPolicyWild):
+  def __init__(self, student: StudentPolicyWild, squash: bool = False):
     super().__init__()
     self.student = copy.deepcopy(student)
     self.proprio_dim = student.proprio_dim
+    self.squash = squash
 
   def forward(self, obs: torch.Tensor, h_in: torch.Tensor):
     proprio = obs[:, : self.proprio_dim]
     height = obs[:, self.proprio_dim :]
     actions, h_out, _ = self.student(proprio, height, h_in)
+    if self.squash:
+      actions = torch.tanh(actions)
     return actions, h_out

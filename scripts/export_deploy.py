@@ -201,12 +201,14 @@ def verify(env: RslRlVecEnvWrapper, policy, onnx_path: Path, cfg: ExportConfig) 
   policy.reset()
   obs = env.get_observations()
   max_err = 0.0
+  squash = env.unwrapped.cfg.squash_actions
   with torch.inference_mode():
     for _ in range(cfg.verify_steps):
       torch_actions = policy.act_inference(obs)
+      expected = torch.tanh(torch_actions) if squash else torch_actions  # what the env applies
       flat_obs = torch.cat([obs["policy"], obs["height_noisy"]], dim=-1).cpu().numpy()
       onnx_actions, h = session.run(None, {"obs": flat_obs.astype(np.float32), "h_in": h})
-      error = float(np.abs(onnx_actions - torch_actions.cpu().numpy()).max())
+      error = float(np.abs(onnx_actions - expected.cpu().numpy()).max())
       if not np.isfinite(error):
         raise RuntimeError("Non-finite policy actions during export verification")
       max_err = max(max_err, error)
@@ -249,7 +251,7 @@ def main(cfg: ExportConfig) -> None:
   try:
     with tempfile.TemporaryDirectory(prefix="pgtt-export-", dir=out_dir.parent) as temp:
       staged = Path(temp)
-      policy.export_onnx(str(staged), "policy.onnx")
+      policy.export_onnx(str(staged), "policy.onnx", squash=env.unwrapped.cfg.squash_actions)
       err = verify(env, policy, staged / "policy.onnx", cfg)
       if err > cfg.tolerance:
         raise RuntimeError(f"ONNX export mismatch {err:.2e} > {cfg.tolerance}")

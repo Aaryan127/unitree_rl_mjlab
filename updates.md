@@ -74,10 +74,13 @@ Deployed observation vector (153) = `policy` (54) + `height_noisy` (99), in that
 
 ## Design decisions (where the papers leave a choice)
 
-- **Rewards** follow PGTT Table I weights. mjlab multiplies all rewards by dt, so only ratios matter.
-- **Foot-phase sigma**: the paper's `sigma_f = 0.05` is read as a 5 cm standard deviation
-  (`sigma = 0.0025` in `exp(-err^2 / sigma)`). Taken literally (0.05) the reward barely
-  changes between a 1 cm and a 10 cm error. First knob to tune if the gait looks wrong.
+- **Rewards** start from the official PGTT code (github.com/NtagkasAlex/phase_guided_terrain_traversal),
+  with tracking x2 and extra terms for what full collisions allow (body_contact termination,
+  base_height, leg_contact). Each step's sum is clipped at 0 as in PGTT; the termination
+  penalty is added after the clip. Reasoning per term: comments in `make_pgtt_env_cfg`.
+- **Foot-phase reward**: as in the PGTT code, `exp(-sum_feet err^2 / 0.05)` (one exponential
+  of the summed squared error, max 1). An earlier per-foot version with sigma 0.0025 paid
+  planted feet most of a 4x larger reward.
 - **Swing trajectory**: stance ratio 0.5, stance height 2.2 cm (foot sphere radius),
   swing apex 8 cm + terrain variation (max - min height within 15 cm of the foot, capped at 15 cm).
   Foot height is measured relative to the ground under the foot (nearest height-scan ray).
@@ -85,11 +88,15 @@ Deployed observation vector (153) = `policy` (54) + `height_noisy` (99), in that
   2.0 Hz on the robot (`deploy.yaml`, `--gait-frequency` in export).
 - **Teacher architecture**: Miki-style encoders (height 99 -> 32, privileged 53 -> 16)
   feeding PGTT's 512-256-128 MLP. Student: same encoders + 256-unit GRU + gated belief.
-- **PD gains / action scale**: kp 20, kd 1 (this repo's Go2 actuator config and stock
-  deploy), action scale 0.25. PGTT used kp 60 / kd 3 on its robot.
+- **Actions / PD gains**: actions are tanh-bounded to [-1, 1] (`squash_actions`, as Brax PPO's
+  tanh-normal policy in the PGTT code), target = default + 0.5 x action, kp 40 / kd 0.5
+  (PGTT training config; its real-robot script uses 60 / 3). The exported ONNX ends with the
+  tanh, and deploy.yaml carries the training gains. An unbounded Gaussian with targets
+  clamped to the joint limits learned to slam its joints between the limits (flat_v3).
 - **Height map value**: `(base_z - terrain_z) - 0.25`, clipped to [-1, 1]. 0 = flat ground
   at walking height, so "no map" (zeros) is a meaningful, trained-for input.
-- **Termination**: only when the robot turns over (> 90 deg), as in PGTT.
+- **Termination**: turned over (> 90 deg), as in PGTT, or trunk/hips touching the terrain
+  (PGTT's feet-only collision model cannot lie down; ours can).
 - **Calf collision geoms** are unnamed in the Go2 XML; the PGTT task names them at load
   time (`_go2_spec_with_named_calves`) so leg-ground contact can be sensed. Stock tasks unchanged.
 - **Contact normals** come from a separate `maxforce` sensor: with `netforce` the normal

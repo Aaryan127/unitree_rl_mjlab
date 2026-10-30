@@ -140,6 +140,14 @@ class ManagerBasedRlEnvCfg:
   fall on purpose. Per-term logs (Episode_Reward/*) show the unclipped values.
   """
 
+  squash_actions: bool = False
+  """Pass the policy's actions through tanh, so every action term receives values in
+  [-1, 1] (as Brax PPO's tanh-normal policy does). The policy itself stays an
+  unbounded Gaussian; PPO's probability ratio is unchanged by the squash. Rewards and
+  observations that read the action manager (action_rate, last_action) see the
+  squashed values, and the exported ONNX ends with the same tanh.
+  """
+
 
 class ManagerBasedRlEnv:
   """Manager-based RL environment."""
@@ -331,6 +339,8 @@ class ManagerBasedRlEnv:
   def step(self, action: torch.Tensor) -> types.VecEnvStepReturn:
     if _debug.ENABLED:  # opt-in prints / pdb stops (mjlab/utils/debug.py)
       _debug.step_hook(self, action)
+    if self.cfg.squash_actions:
+      action = torch.tanh(action)
     self.action_manager.process_action(action.to(self.device))
 
     for _ in range(self.cfg.decimation):
