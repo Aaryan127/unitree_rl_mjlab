@@ -501,3 +501,69 @@ def unitree_go2_pgtt_repro_smooth_env_cfg(play: bool = False) -> ManagerBasedRlE
   cfg = unitree_go2_pgtt_repro_env_cfg(play=play)
   cfg.rewards["action_acc"] = RewardTermCfg(func=mdp.action_acc_l2, weight=-0.02)
   return cfg
+
+
+##
+# The ladder from rung 0b to the full teacher (doc/reward_hacking_runs_1-3.md, "The plan").
+##
+
+RUNG_NAMES = ("collisions", "delays", "pushes", "randomization", "rewards", "commands", "terrain")
+
+
+def unitree_go2_pgtt_rung_env_cfg(rung: int, play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Rung 0b plus the first `rung` changes towards the full teacher, each taken from it:
+
+    1 collisions     full-body collisions; the trunk or a hip on the ground ends the episode
+    2 delays         0-20 ms motor delay and the teacher's sensor delays
+    3 pushes         velocity pushes and the external force on the base
+    4 randomization  the teacher's wider domain randomization and reset states
+    5 rewards        base_height, leg_contact and joint_limits (see below)
+    6 commands       all three axes at once, 5% standing, resampled every 8-12 s
+    7 terrain        mixed terrain (stairs, slopes, rough) with the terrain curriculum
+
+  v1-v4 changed all of this at once and never walked; one change per rung means a failed
+  rung points at exactly one change (scripts/train_ladder.sh stops there).
+
+  Rung 5 takes only the teacher terms for what full collisions and terrain make possible:
+  crouching (base_height), kneeling or dragging a shin (leg_contact) and pressing into
+  the joint limits. Not its doubled tracking weights, -100 termination, power/torque
+  terms or penalty ramps: the PGTT rewards walk, action_acc already smooths, and a ramp
+  only delays a failure (lesson 7). No ramp here either, so a failure shows in 1500
+  iterations. After rung 7 the remaining differences from the teacher task are these
+  rewards, PGTT's joint damping and joint_pos noise, and the runner (Brax settings).
+  """
+  cfg = unitree_go2_pgtt_repro_smooth_env_cfg(play=play)
+  teacher = unitree_go2_pgtt_env_cfg(play=play)
+  full = teacher.scene.entities["robot"]
+
+  if rung >= 1:
+    robot = cfg.scene.entities["robot"]
+    cfg.scene.entities["robot"] = replace(robot, collisions=full.collisions)
+    cfg.terminations["body_contact"] = teacher.terminations["body_contact"]
+  if rung >= 2:
+    robot = cfg.scene.entities["robot"]
+    cfg.scene.entities["robot"] = replace(
+      robot, articulation=replace(robot.articulation, actuators=full.articulation.actuators)
+    )
+    if "actuator_delay" in teacher.events:
+      cfg.events["actuator_delay"] = teacher.events["actuator_delay"]
+    for group_name, group in teacher.observations.items():
+      for term_name, term in group.terms.items():
+        ours = cfg.observations[group_name].terms[term_name]
+        ours.delay_min_lag, ours.delay_max_lag = term.delay_min_lag, term.delay_max_lag
+  if rung >= 3:
+    for name in ("push_robot", "external_wrench"):
+      if name in teacher.events:  # not in play mode
+        cfg.events[name] = teacher.events[name]
+  if rung >= 4:
+    cfg.events.update(teacher.events)  # keeps PGTT's joint_damping randomization
+  if rung >= 5:
+    for name in ("base_height", "leg_contact", "joint_limits"):
+      cfg.rewards[name] = teacher.rewards[name]
+  if rung >= 6:
+    cfg.commands["twist"] = teacher.commands["twist"]
+  if rung >= 7:
+    cfg.scene.terrain = teacher.scene.terrain
+    if "terrain_levels" in teacher.curriculum:  # not in play mode
+      cfg.curriculum["terrain_levels"] = teacher.curriculum["terrain_levels"]
+  return cfg

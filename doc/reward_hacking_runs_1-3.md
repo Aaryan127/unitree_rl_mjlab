@@ -351,6 +351,36 @@ PGTT trains 200M steps, which is about 2440 iterations here.
   Each run uses the same pass criteria, so a failure points at exactly one change.
 - Then the student is distilled from the last teacher that passed.
 
+**Rungs 1-7 as built** (`unitree_go2_pgtt_rung_env_cfg`, tasks
+`Mjlab-Velocity-PGTT-Rung<N>-Unitree-Go2`, all trained in a row by `scripts/train_ladder.sh`).
+Each rung copies its change from the full teacher config, so rung 7 is the teacher except
+for what is listed under "left out".
+
+| Rung | Run name | Adds (on top of the rung before) | Iterations |
+|---|---|---|---|
+| 1 | `rung1_collisions` | full-body collisions; trunk/hip contact ends the episode | 1500 |
+| 2 | `rung2_delays` | 0-20 ms actuator delay; 1-step sensor delays (3 for the student's map) | 1500 |
+| 3 | `rung3_pushes` | velocity pushes every 4-8 s, ±15 N / ±2 Nm on the base every 3-6 s | 1500 |
+| 4 | `rung4_randomization` | the teacher's events: friction 0.3-1.2, mass -1/+2 kg, CoM, link mass, gains, effort limits, joint friction, armature, encoder bias, tilted and moving resets | 1500 |
+| 5 | `rung5_rewards` | `base_height` (-50), `leg_contact` (-0.25), `joint_limits` (-1), no ramp | 1500 |
+| 6 | `rung6_commands` | all three command axes at once, 5% standing, resampled every 8-12 s | 1500 |
+| 7 | `rung7_terrain` | mixed terrain (stairs, slopes, rough) with the terrain curriculum | 6000 |
+
+- **Rung 5 is smaller than "our extra reward terms".** It adds only the terms for what full
+  collisions and terrain make possible: crouching, kneeling or dragging a shin, pressing into
+  the joint limits. Left out on purpose: the doubled tracking weights, the -100 termination,
+  the power/torque terms and the penalty ramps. The PGTT rewards already walk, `action_acc`
+  already smooths, and a ramp only delays a failure (lesson 7).
+- **Left out of rung 7 compared with the teacher task:** those rewards, PGTT's passive
+  joint damping (0.5) and its joint_pos noise (±0.03), and the runner (Brax settings, not
+  the teacher's). All are PGTT's own choices, kept because they walk.
+- **The script's gate is weaker than the pass criteria.** It stops only on a HACK verdict
+  in the hacks check of the last checkpoint, so it can run overnight. Each rung still has to
+  be judged on the full criteria (hacks check with no WARN, `eval_gait.py` against the rung
+  before) before its teacher is trusted.
+- **The checker counts each fall once now.** With full collisions a fall can trip
+  `fell_over` and `body_contact` in the same step; before, both were added to `falls_per_min`.
+
 **Run 4 data:** copied and checked (section 1): the std was pinned at 1.0 for the whole run.
 
 ## Rung 0 result: the first walking policy
@@ -454,6 +484,10 @@ What a failure would mean:
 - Tremor above 0.25 means the weight is too weak; try −0.05 with the clip-binding share
   logged.
 - Tracking below 0.9 means it is too strong.
+
+**0b result (2026-11-01):** run `smooth0b`, 1500 iterations. It walks in the viewer. The
+numbers (tremor, share of action power above 6 Hz) are not measured yet; the ladder (rungs
+1-7) builds on it from here.
 
 ### Should repro0 keep training? No.
 

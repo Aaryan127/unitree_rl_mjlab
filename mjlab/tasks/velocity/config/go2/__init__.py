@@ -3,10 +3,12 @@ from mjlab.tasks.registry import register_mjlab_task
 from mjlab.tasks.velocity.rl import VelocityOnPolicyRunner
 
 from .env_cfgs import (
+  RUNG_NAMES,
   unitree_go2_flat_env_cfg,
   unitree_go2_pgtt_env_cfg,
   unitree_go2_pgtt_repro_env_cfg,
   unitree_go2_pgtt_repro_smooth_env_cfg,
+  unitree_go2_pgtt_rung_env_cfg,
   unitree_go2_rough_env_cfg,
 )
 from .rl_cfg import (
@@ -67,3 +69,14 @@ register_mjlab_task(
   rl_cfg=unitree_go2_pgtt_repro_runner_cfg(),
   runner_cls=OnPolicyRunner,
 )
+
+# Rungs 1-7: rung 0b plus one more change each, up to the full teacher (Rung7 is it).
+# scripts/train_ladder.sh trains them in order.
+for _rung in range(1, len(RUNG_NAMES) + 1):
+  register_mjlab_task(
+    task_id=f"Mjlab-Velocity-PGTT-Rung{_rung}-Unitree-Go2",
+    env_cfg=unitree_go2_pgtt_rung_env_cfg(_rung),
+    play_env_cfg=unitree_go2_pgtt_rung_env_cfg(_rung, play=True),
+    rl_cfg=unitree_go2_pgtt_repro_runner_cfg(),
+    runner_cls=OnPolicyRunner,
+  )

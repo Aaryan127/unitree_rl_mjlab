@@ -88,6 +88,7 @@ def check(checkpoint_file: str, cfg: HackCheckConfig) -> dict:
     sums: dict[str, list[float]] = {}
     rewards = torch.zeros(len(base.reward_manager.active_terms))
     terminations: dict[str, int] = {}
+    falls = 0
     obs = env.get_observations()
     with torch.no_grad():
       for _ in range(cfg.steps):
@@ -98,6 +99,8 @@ def check(checkpoint_file: str, cfg: HackCheckConfig) -> dict:
           if valid.numel():
             sums.setdefault(name, []).append(float(valid.mean()))
         rewards += base.reward_manager._step_reward.mean(0).cpu()
+        # Once per robot: a fall can trip several terms at once (flip and body contact).
+        falls += int(base.termination_manager.terminated.sum())
         for name in base.termination_manager.active_terms:
           if name != "time_out":
             terminations[name] = terminations.get(name, 0) + int(base.termination_manager.get_term(name).sum())
@@ -106,7 +109,7 @@ def check(checkpoint_file: str, cfg: HackCheckConfig) -> dict:
 
   metrics = {name: sum(v) / len(v) for name, v in sums.items()}
   robot_minutes = cfg.num_envs * cfg.steps * base.step_dt / 60
-  metrics["falls_per_min"] = sum(terminations.values()) / robot_minutes
+  metrics["falls_per_min"] = falls / robot_minutes
   reward_share = dict(zip(base.reward_manager.active_terms, (rewards / cfg.steps).tolist()))
   return dict(checkpoint=checkpoint_file, iteration=checkpoint.get("iter"), metrics=metrics,
               terminations=terminations, rewards=reward_share)
