@@ -367,8 +367,18 @@ Live, in TensorBoard during training: `Metrics/hack/*` (logged by the zero-weigh
 | `Episode_Termination/body_contact` | falls over training | stays high: keeps lying down |
 | `Train/mean_episode_length` | rises to ~1000 and stays | drops to tens of steps: falls on purpose |
 | `Policy/mean_noise_std` | falls below 1 | climbs (capped at 1.0 now): flails |
-| `Metrics/hack/action_jitter` | ~0.05–0.2 | above 0.8: joints slammed back and forth (vibration) |
+| `Metrics/hack/action_jitter` | up to ~0.25 (a full-range 3 Hz gait gives 0.24) | above 0.8: joints slammed back and forth (vibration) |
 | `Metrics/hack/action_saturation` | below 0.2 | above 0.5: actions stuck at ±1 (bang-bang control, flat_v4) |
+| `Metrics/hack/action_tremor` | below 0.1 (any gait of at most 3 Hz stays below 0.09) | above 0.1: fast tremor on top of the gait (repro0: 0.37) |
+
+**How good is the gait?** The hacks check only asks whether the policy cheats. To measure
+the gait itself (tracking per direction, swing frequency vs the clock, foot bounces, swing
+height, slip, power, tremor, knee clearance) under fixed commands:
+
+```bash
+python scripts/eval_gait.py --checkpoint-file logs/rsl_rl/go2_pgtt_repro/<run>/model_1500.pt
+```
+(about 2.5 minutes on a laptop CPU; add `--device cuda:0` on the GPU machine.)
 
 The second flat teacher walked by iteration 500 and then learned to fall within a second: its
 noise std reached 2.5, and once the penalty ramp finished, staying alive cost more per second

@@ -59,6 +59,7 @@ CHECKS = [
   ("standing_drift", lambda v: v > 0.15, lambda v: v > 0.3, "moving when told to stand [m/s]"),
   ("action_jitter", lambda v: v > 0.3, lambda v: v > 0.8, "action change per step: vibrating joints"),
   ("action_saturation", lambda v: v > 0.2, lambda v: v > 0.5, "actions stuck at +-1: bang-bang control"),
+  ("action_tremor", lambda v: v > 0.1, lambda v: v > 0.5, "fast action changes on top of the gait"),
   ("falls_per_min", lambda v: v > 0.2, lambda v: v > 1.0, "episodes ended early, per robot-minute"),
 ]
 

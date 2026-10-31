@@ -483,3 +483,21 @@ def unitree_go2_pgtt_repro_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   for name in [n for n in cfg.curriculum if n.startswith("ramp_")]:
     cfg.curriculum.pop(name)
   return cfg
+
+
+def unitree_go2_pgtt_repro_smooth_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Rung 0b: the reproduction plus one term, a penalty on the action's second difference.
+
+  repro0 walks well but its actions carry a fast tremor on top of the gait: 85% of the
+  action-rate cost and 98% of sum (a_t - 2a_(t-1) + a_(t-2))^2 is above 6 Hz, while the
+  gait itself is 1-3 Hz. PGTT's action_rate (-0.001) costs 0.0015/s, too little to matter.
+
+  The second difference of a sine of frequency f scales as (2 sin(pi f dt))^2, so it costs
+  a 12 Hz tremor ~900x more than a 2 Hz gait of the same size (action_rate: ~30x), and it
+  removes the tremor without fighting the steps. Weight -0.02: the largest that keeps the
+  zero clip slack early in training (a random policy pays ~0.35/s of the ~1/s it earns;
+  -0.05 would pay ~0.9/s). On repro0 it costs the tremor 0.061/s and the gait 0.001/s.
+  """
+  cfg = unitree_go2_pgtt_repro_env_cfg(play=play)
+  cfg.rewards["action_acc"] = RewardTermCfg(func=mdp.action_acc_l2, weight=-0.02)
+  return cfg

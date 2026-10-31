@@ -1,4 +1,4 @@
-# Reward hacking in the PGTT teacher: runs 1-4 and the fixes
+# Reward hacking in the PGTT teacher: runs 1-4, the fixes, and the first walking policy
 
 Four flat-ground teacher runs (27-31 Oct 2026) each found a different way to score without
 walking: v1 lay down and paddled, v2 fell on purpose, v3 vibrated its joints, v4 (with
@@ -14,12 +14,18 @@ After run 4 the approach changed (see [Why four runs failed](#why-four-runs-fail
 - the next run reproduces the official PGTT setup, which is published to walk. Our
   additions then go back in one at a time.
 
+**Result (31 Oct):** the reproduction (`repro0`) walked: speed ratio 0.95, no falls, no
+saturation, noise std 0.70 → 0.28. Run 4's own logs then confirmed the entropy diagnosis: its
+noise std was exactly 1.000 (the cap) at every one of 6944 iterations. See
+[Rung 0 result](#rung-0-result-the-first-walking-policy).
+
 | Run | Folder (`logs/rsl_rl/go2_pgtt_teacher/`) | What it learned | Fix (commit) |
 |---|---|---|---|
 | v1 | `2026-10-27_20-18-35_flat` → `2026-10-28_01-14-38_flat` (to 11000) | lie on the belly and paddle | rebalanced rewards, body-contact termination, hacking checker (`5981fe3`) |
 | v2 | `2026-10-29_04-12-16_flat_v2` (to 4300, machine reboot) | walk at 500, then fall on purpose | reward clip at 0, noise std cap (`6a11dc1`) |
 | v3 | `*_flat_v3` (10000) | vibrate the joints between their limits | tanh-bounded actions, PGTT gains and foot-phase formula (`3164449`) |
-| v4 | `2026-10-30_16-23-42_flat_v4` (6300 checked) | bang-bang vibration, a fall every 1.2 s | entropy on the squashed action, PGTT reproduction as baseline (not committed yet) |
+| v4 | `2026-10-30_16-23-42_flat_v4` (6300 checked) | bang-bang vibration, a fall every 1.2 s | entropy on the squashed action, PGTT reproduction as baseline (`15ba559`) |
+| repro0 | `go2_pgtt_repro/*_repro0` (3000) | **walks**: trot, 95% of commanded speed, no falls | baseline for the ladder |
 
 ## How the reward works here
 
@@ -214,7 +220,7 @@ plus −1.59 from falls. Most steps sum below zero, so the clip turns them into 
 
 ## Why four runs failed
 
-### 1. The entropy bonus rewards saturated actions (proven; the cause of v2-v4 is likely, not yet confirmed)
+### 1. The entropy bonus rewards saturated actions (proven, and confirmed on run 4's logs)
 
 PPO's loss includes `−0.01 × entropy`. rsl_rl computes the entropy of the Gaussian z, but the
 robot executes a = tanh(z) (v4), or a clamp of z (v2, v3: targets clamped to the joint limits).
@@ -242,8 +248,13 @@ What this means:
   (Brax: softplus + 0.001, no cap).
 
 Fix: `squashed_entropy=True` in `ActorCriticWild` (Brax's formula, unit test in
-`tests/test_pgtt_audit.py`). Still to confirm on run 4's logs: that `Policy/mean_noise_std`
-stayed at 1.0 and that most raw outputs |μ| > 2 (see "Data still needed" below).
+`tests/test_pgtt_audit.py`).
+
+**Confirmed on run 4's TensorBoard log:** `Policy/mean_noise_std` = 1.000 and `Loss/entropy` =
+17.027 at every logged iteration from 0 to 6944. 17.027 = 12 × ½ log(2πe), the entropy of 12
+unit Gaussians, so the std sat exactly on the cap for the whole run. The policy never got
+more precise. In repro0, with the corrected entropy, the std fell 0.70 → 0.31 within 300
+iterations and to 0.28 by the end.
 
 ### 2. Every run changed many things against the published setup at once
 
@@ -327,6 +338,8 @@ PGTT trains 200M steps, which is about 2440 iterations here.
 - **If rung 0 fails**, the cause is in our training stack (rsl_rl, mjlab), not in rewards. The
   next test is the stock `Mjlab-Velocity-Flat-Unitree-Go2` task.
 - **If it passes**, add one change per run (~1500 iterations each), in this order:
+  0b. a penalty on fast action changes (added after repro0's gait analysis, see
+     [Rung 0 result](#rung-0-result-the-first-walking-policy)),
   1. full-body collisions + trunk/hip termination,
   2. motor and sensor delays,
   3. pushes and external force,
@@ -338,9 +351,134 @@ PGTT trains 200M steps, which is about 2440 iterations here.
   Each run uses the same pass criteria, so a failure points at exactly one change.
 - Then the student is distilled from the last teacher that passed.
 
-**Data still needed from run 4** (to confirm section 1 on the run itself): the TensorBoard
-events file and a few checkpoints. Check `Policy/mean_noise_std` (expect it pinned at 1.0) and
-the share of raw outputs |μ| > 2 per checkpoint.
+**Run 4 data:** copied and checked (section 1): the std was pinned at 1.0 for the whole run.
+
+## Rung 0 result: the first walking policy
+
+Run `go2_pgtt_repro/*_repro0`: 3000 iterations on the 3070 (about 3 hours), checked on the
+laptop with `scripts/check_reward_hacking.py` and the new `scripts/eval_gait.py`.
+
+### Pass criteria (fixed before the run)
+
+| Check (model_2500, deterministic) | Result | Criterion |
+|---|---|---|
+| `speed_ratio` | 0.949 | ≥ 0.65 |
+| `falls_per_min` | 0 | < 0.2 |
+| `action_saturation` | 0.003 | < 0.2 |
+| `action_jitter` | 0.240 | < 0.3 |
+| `Policy/mean_noise_std` | 0.70 → 0.31 by iteration 300, 0.28 at the end | falls below 0.7 |
+
+It passed every criterion, at iteration 1000 as well. The short check's zero falls (5.3
+robot-minutes) can't by itself show a rate below 0.2/min. The training log can:
+`Episode_Termination/fell_over` is about 0 over 4096 robots for the last 1500 iterations.
+This is one seed only.
+
+### How it walks (`eval_gait.py`, fixed commands, 3 robots each, 9 s after a 3 s settle)
+
+| Scenario | Achieved | swing/s | blip/s | apex [cm] | slip [m/s] | tilt [°] | power [W] | tremor | power > 6 Hz |
+|---|---|---|---|---|---|---|---|---|---|
+| stand, 2 Hz | 0.01 m/s | 1.94 | 1.27 | 8.5 | 0.14 | 1.4 | 77 | 0.32 | 21% |
+| forward 0.6, 2 Hz | 0.60 | 1.94 | 1.22 | 7.7 | 0.16 | 1.4 | 117 | 0.31 | 20% |
+| forward 1.0, 2 Hz | 1.01 | 1.93 | 1.73 | 8.5 | 0.25 | 1.3 | 159 | 0.35 | 22% |
+| forward 0.6, 1 Hz | 0.59 | 0.94 | 2.33 | 8.5 | 0.19 | 2.3 | 98 | 0.31 | 22% |
+| forward 1.0, 3 Hz | 1.00 | 2.93 | 1.58 | 6.5 | 0.28 | 1.1 | 188 | 0.41 | 32% |
+| backward 0.5 | −0.49 | 1.94 | 1.88 | 7.1 | 0.25 | 0.5 | 93 | 0.38 | 27% |
+| sideways 0.5 | 0.48 | 1.94 | 2.31 | 6.5 | 0.26 | 1.4 | 111 | 0.39 | 29% |
+| turn 1.0 rad/s | 1.01 rad/s | 1.93 | 1.31 | 7.7 | 0.17 | 1.7 | 83 | 0.34 | 23% |
+
+- **Tracking is excellent** in every direction: 95-101% of the command, no overspeed, cross
+  errors ≤ 0.01.
+- **It trots exactly on the clock.** Swings per second equal the commanded 1, 2 or 3 Hz.
+  Diagonal feet agree 89-96% of the time, and 83-90% of contacts match the clock.
+- **Swing apex 6.5-8.5 cm** (the target is 10 cm above stance).
+- **The body is steady:** height 0.28 m, tilt 0.5-2.3°.
+- **Knees never come close to the ground.** The lowest knee origin is 6.7 cm, so full
+  collisions (rung 1) shouldn't collide anything new.
+- **Torque** peaks at 19-22 Nm (limit 23.5). No action is saturated.
+- **It steps in place when told to stand**: the clock never stops, so it uses 77 W.
+- **Tremor.** The actions are a clean trot plus fast tremor. 85% of `Σ(Δa)²` and 98% of
+  `Σ(a_t − 2a_(t−1) + a_(t−2))²` lie above 6 Hz, and 20-32% of the action power is above
+  6 Hz. Its tremor (0.29-0.43) is 4× what any motion of at most 3 Hz within the action range
+  can produce (0.09).
+- **Bounces.** Feet make 1-2.3 short air gaps (< 60 ms) per foot-second.
+- **Training longer does not fix the tremor.** At iteration 1500 it was 0.29-0.43, the same
+  as at 2500. Rewards were already at 98% of their maximum: 2.456 of 2.5/s, with all
+  penalties costing 0.03/s. There is nothing left in the objective that asks for it.
+
+### Desiderata: which are under- or over-valued
+
+| Desideratum | Term (weight) | What it costs / earns now | Measured | Verdict |
+|---|---|---|---|---|
+| Velocity tracking | track_lin 1.0, track_ang 0.5 | 1.47 of 1.5/s | 95-101% in every direction | right |
+| Gait timing and swing height | foot_phase 1.0, swing_contact −0.25 | 0.99 of 1/s | on the clock, apex 6.5-8.5 cm | right |
+| Steady body | lin_vel_z −2, ang_vel_xy −0.05 | −0.02/s | tilt < 2.3° | right |
+| Hips not splayed | default_pose (hips) −0.5 | −0.007/s | fine | right |
+| **Smooth actions** | action_rate −0.001 | −0.0015/s (0.06%) | tremor 0.37, 20-32% of action power > 6 Hz | **undervalued** |
+| Low energy | torques −2e-6 | −0.0002/s (0.01%) | 77-188 W | undervalued, but tremor wastes power too: revisit after 0b |
+| Soft landing | none | 0 | 1-2.3 bounces/foot-s | unrewarded: revisit after 0b (tremor at touchdown may cause it) |
+| No foot slip | none | 0 | 0.14-0.28 m/s (includes the ball foot rolling) | unrewarded: measure the real contact-point slip first |
+| Stand still on a zero command | none (the clock always runs) | 0 | steps in place, 77 W | by design in PGTT: handle on the robot with a stand mode, not with a reward |
+
+Nothing is measurably over-valued: tracking and the gait clock are both satisfied, not
+overdone. Compared per radian of joint-target change, PGTT's smoothing is very weak:
+- PGTT: 0.004 /rad²
+- legged_gym: 0.16 /rad² (40× PGTT)
+- mjlab's stock Go2: 0.8 /rad² (200× PGTT)
+
+### The fix: rung 0b, a penalty on the action's second difference
+
+`Mjlab-Velocity-PGTT-Repro-Smooth-Unitree-Go2` is repro0 plus one term, `action_acc_l2`
+(weight −0.02), on a_t − 2a_(t−1) + a_(t−2).
+- **Why the second difference.** For a sine of frequency f, the first difference scales as
+  (2 sin(πf·dt))² and the second as its square. Per unit of amplitude, the second difference
+  costs a 12 Hz tremor about 900× more than a 2 Hz gait. The first difference
+  (`action_rate`) does that only 30× more, so it also fights the steps. On repro0's actions,
+  98% of this term's cost is tremor and 2% is the gait. Walk These Ways uses the same term
+  (its action smoothness 2).
+- **Why −0.02.** It's the largest round weight that keeps the zero clip slack early on: a
+  random policy pays about 0.35/s of the ~1/s it earns, while −0.05 would pay 0.9/s and bring
+  back v4's binding clip. On repro0 it costs the tremor 0.061/s and the gait 0.001/s, which is
+  the biggest remaining gradient once tracking is saturated.
+- **What it does not change.** Weight −0.02 can't make standing more attractive than walking:
+  both step on the clock, and the gait part costs 0.001/s.
+
+**Pass criteria for 0b (fixed before the run).** Fresh run, 1500 iterations, compared with
+repro0's model_1500, which has the same training budget.
+- **No regression:** `speed_ratio` ≥ 0.9, 0 falls, saturation < 0.05, swings/s within 5% of
+  the clock, apex ≥ 6 cm.
+- **Fixed:** `action_tremor` < 0.15 (repro0: 0.37) and action power above 6 Hz < 10% in
+  every scenario (repro0: 20-32%).
+- **Watched, not criteria:** bounces/s, power, slip.
+
+What a failure would mean:
+- Tremor above 0.25 means the weight is too weak; try −0.05 with the clip-binding share
+  logged.
+- Tracking below 0.9 means it is too strong.
+
+### Should repro0 keep training? No.
+
+- From 1000 to 3000 its metrics hardly moved (speed ratio 0.935 → 0.957) and the reward is at
+  98% of its maximum.
+- What is left to fix (tremor) isn't in its objective, so more iterations of the same run
+  can't fix it.
+- Repro0 is kept frozen as the parent and the control.
+- Each rung starts fresh. A rung has to show that its change can be learned from scratch,
+  because the final teacher must be. repro0 reached 93% tracking by iteration 300, so
+  1500 iterations (about 1.5 hours) per rung is enough.
+
+### What `suggestions.md` raised, and where it stands
+
+| Point | Status |
+|---|---|
+| Don't call the port known-good until measured | Measured now: it walks, on one seed. |
+| "std must fall" is not a correctness test (even correct entropy can raise it) | Agreed; kept as a diagnostic only. It fell here. |
+| 0.65 is not PGTT's metric; also check overspeed and per-direction error | eval_gait reports each direction: no overspeed, cross errors ≤ 0.01. |
+| 5.3 robot-minutes can't certify < 0.2 falls/min | Training log: ~0 falls over 4096 robots for 1500 iterations. |
+| Feet-only collisions hide body contact; measure clearance geometrically | Lowest knee origin is 6.7 cm; base at 0.28 m. |
+| Pass at several checkpoints and seeds | Passes at 1000, 1500 and 2500. Only one seed so far: run a second seed on the final rung. |
+| Compare a child against its parent at the same budget | 0b at 1500 is compared with repro0's model_1500. |
+| Split rungs (collisions vs termination, motor vs sensor delay) | Adopted where cheap: split if a combined rung fails. |
+| Checker samples after resets; per-cause falls can double count | Doesn't affect a run with zero falls. Still to fix before rungs with falls. |
 
 ## Lessons
 
@@ -362,8 +500,14 @@ the share of raw outputs |μ| > 2 per checkpoint.
    pushes the std up for free and the mean into saturation.
 10. **Reproduce a known-good result before changing it.** Then add one change at a time, with
     pass criteria fixed before the run.
+11. **Once the reward saturates, what is left is only what the penalties ask for.** repro0 got
+    98% of the maximum reward; its tremor survived 1500 more iterations because nothing paid
+    for removing it. Training longer is not a fix for something the objective doesn't measure.
+12. **Penalise what you want gone, at the frequency where it lives.** The second difference
+    of the action separates a 12 Hz tremor from a 2 Hz gait about 900× per unit size; the first
+    difference only 30×. Measure the spectrum before choosing the term.
 
-## What to watch in the reproduction run
+## What to watch in a rung run (repro0, 0b, ...)
 
 | When | Graph or check | Good | Bad |
 |---|---|---|---|
@@ -372,7 +516,8 @@ the share of raw outputs |μ| > 2 per checkpoint.
 | throughout | `Metrics/hack/action_saturation` | below 0.2 | above 0.5 (bang-bang) |
 | throughout | `Metrics/hack/action_jitter` | 0.05-0.3 | above 0.8 |
 | from ~1000 | `Metrics/hack/speed_ratio` | rising towards 1 | near 0 |
-| 2500 | hacks check on the checkpoint | the pass criteria above | anything HACK |
+| throughout | `Metrics/hack/action_tremor` | falling below 0.15 (0b) | stays ~0.35 like repro0 |
+| 1500 | hacks check + `eval_gait.py` on the checkpoint | that rung's pass criteria | anything HACK, or a regression against its parent |
 
 `body_ground_frac` and `leg_ground_frac` stay 0 in the reproduction: with feet-only collisions
 nothing but the feet can touch the ground.

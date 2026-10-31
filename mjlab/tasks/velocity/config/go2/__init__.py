@@ -6,6 +6,7 @@ from .env_cfgs import (
   unitree_go2_flat_env_cfg,
   unitree_go2_pgtt_env_cfg,
   unitree_go2_pgtt_repro_env_cfg,
+  unitree_go2_pgtt_repro_smooth_env_cfg,
   unitree_go2_rough_env_cfg,
 )
 from .rl_cfg import (
@@ -54,6 +55,15 @@ register_mjlab_task(
   task_id="Mjlab-Velocity-PGTT-Repro-Unitree-Go2",
   env_cfg=unitree_go2_pgtt_repro_env_cfg(),
   play_env_cfg=unitree_go2_pgtt_repro_env_cfg(play=True),
+  rl_cfg=unitree_go2_pgtt_repro_runner_cfg(),
+  runner_cls=OnPolicyRunner,
+)
+
+# Rung 0b: the reproduction plus a penalty on fast action changes (tremor).
+register_mjlab_task(
+  task_id="Mjlab-Velocity-PGTT-Repro-Smooth-Unitree-Go2",
+  env_cfg=unitree_go2_pgtt_repro_smooth_env_cfg(),
+  play_env_cfg=unitree_go2_pgtt_repro_smooth_env_cfg(play=True),
   rl_cfg=unitree_go2_pgtt_repro_runner_cfg(),
   runner_cls=OnPolicyRunner,
 )

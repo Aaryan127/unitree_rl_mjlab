@@ -13,9 +13,11 @@ command shows up even when the reward curve looks fine:
   feet_down_moving   fraction of moving robots with all four feet on the ground
                      (shuffling / sliding instead of stepping)
   standing_drift     speed of robots commanded to stand [m/s]
-  action_jitter      mean |a_t - a_(t-1)| over the joints (tanh-bounded actions: a smooth
-                     gait ~0.05, slamming the joints back and forth ~2)
+  action_jitter      mean |a_t - a_(t-1)| over the joints (tanh-bounded actions: a full-range
+                     3 Hz sine gives 0.24, slamming the joints back and forth ~2)
   action_saturation  fraction of tanh-bounded actions beyond +-0.95 (bang-bang control)
+  action_tremor      mean |a_t - 2a_(t-1) + a_(t-2)|: fast changes on top of the gait (any
+                     motion of at most 3 Hz within the action range stays below 0.09)
 
 `hacking_monitor` logs them every step as Metrics/hack/* (it is a reward term that always
 returns 0, so it never changes training); scripts/check_reward_hacking.py calls
@@ -72,6 +74,9 @@ def behaviour_metrics(
   actions = env.action_manager
   out["action_jitter"] = (actions.action - actions.prev_action).abs().mean(-1)
   out["action_saturation"] = (actions.action.abs() > 0.95).float().mean(-1)
+  out["action_tremor"] = (
+    actions.action - 2 * actions.prev_action + actions.prev_prev_action
+  ).abs().mean(-1)
   return out
 
 
