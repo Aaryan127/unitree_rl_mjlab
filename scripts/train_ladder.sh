@@ -9,7 +9,7 @@
 #
 # Run it from the repo root with the venv active, inside tmux. It uses the RTX 3070 on the
 # GPU machine unless CUDA_VISIBLE_DEVICES is already set. Rungs 1-6 train 1500 iterations
-# (~1.5 h each), rung 7 (terrain) 6000 (~6 h). Run folders:
+# (~3 h each at ~7 s per iteration), rung 7 (terrain) 6000 (12 h or more). Run folders:
 # logs/rsl_rl/go2_pgtt_repro/<date>_<time>_rung<N>_<name>/, with hacking_check.txt inside.
 set -euo pipefail
 

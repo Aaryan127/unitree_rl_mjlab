@@ -4,9 +4,22 @@
 
 The [SVG poster](pgtt_ml_pipeline.svg) is a single zoomable image. Open it directly in the
 editor or a browser to inspect the small labels. The PNG above is a full-size image of the
-same poster. It follows the current
+same poster. Poster and text follow the
 `Mjlab-Velocity-PGTT-{Teacher,Student}-Unitree-Go2` configuration. `B` below means the
 number of parallel simulated robots.
+
+> **Update, 2 Nov 2026.** The teacher is no longer trained with the `...-Teacher-...` task's
+> rewards. That reward set never produced a walking policy
+> ([reward_hacking_runs_1-3.md](reward_hacking_runs_1-3.md)). It is rebuilt as a ladder:
+> - the official PGTT setup (`...-Repro-...`), which walks;
+> - one change at a time up to `...-Rung7-...`, which has this page's terrain, sensors,
+>   observations and randomization.
+>
+> Rung 7 keeps PGTT's reward set: tracking +1 / +0.5, no orientation or joint-power terms,
+> plus `action_acc`, `base_height`, `leg_contact` and `joint_limits`. It also keeps PGTT's PPO
+> settings and measures the foot-phase target from the IMU (stance 0.30 m, apex 0.20 m below
+> it). Network, observation routing, student and export below are unchanged. The poster
+> still shows the old teacher rewards.
 
 ## 1. Task: what is being learned?
 
@@ -23,14 +36,17 @@ observation and reward target; the policy still chooses joint actions.
 
 One environment step lasts `0.005 s physics timestep × 4 substeps = 0.02 s`, so the
 policy runs at 50 Hz. Its 12 outputs become joint position targets by
-`q_target = q_default + 0.25 × action`, clamped to the model's joint limits in both
-new training runs and deployment export. PD actuators turn those targets into torque.
-An episode ends after 20 s or when body tilt exceeds 90°.
+`q_target = q_default + 0.5 × action`, with the action tanh-bounded to `[-1, 1]` (as in the
+official PGTT code), and clamped to the model's joint limits in both new training runs and
+deployment export. PD actuators turn those targets into torque.
+An episode ends after 20 s, when body tilt exceeds 90°, or when the trunk or a hip touches
+the ground (`body_contact`).
 
-The active reward is a weighted sum, multiplied by the 0.02 s step duration. The main
-positive terms are XY velocity tracking (`+1`), yaw-rate tracking (`+0.5`), and the
-terrain-aware foot-phase reward (`+1`). Penalties cover swing contact, body motion,
-orientation, action rate, joint power/torque/limits, pose deviation, and termination.
+The active reward is a weighted sum, multiplied by the 0.02 s step duration; each step's sum
+is clipped at 0 and the termination penalty is added after the clip. The main
+positive terms are XY velocity tracking (`+2`; PGTT `+1`), yaw-rate tracking (`+1`; PGTT
+`+0.5`), and the terrain-aware foot-phase reward (`+1`). Penalties cover swing contact, body
+motion, orientation, action rate, joint power/torque/limits, pose deviation, and termination.
 Optional zero-weight terms do not run until enabled. The exact terms and weights are in
 [the task configuration](../mjlab/tasks/velocity/velocity_env_cfg.py) and the
 [reward functions](../mjlab/tasks/velocity/mdp/rewards.py).
@@ -38,8 +54,10 @@ Optional zero-weight terms do not run until enabled. The exact terms and weights
 For each leg, the foot-phase target is its ground-relative standing height during
 `0 ≤ phase < π`. During `π ≤ phase < 2π`, it rises and falls through a smooth swing
 trajectory. The swing apex is `0.08 m + nearby terrain height range`, with the added
-height capped at `0.15 m`. The reward sums
-`exp(-(desired_foot_height - actual_foot_height)^2 / 0.0025)` across the four legs.
+height capped at `0.15 m`. The reward is one exponential of the error summed over the four
+legs, `exp(-Σ_legs (desired_foot_height - actual_foot_height)^2 / 0.05)` (max 1), as in the
+official PGTT code. An earlier version summed one exponential per leg with σ 0.0025; it paid
+planted feet most of a 4× larger reward.
 The clean height scanner provides the terrain heights used by this reward.
 
 At reset, [terrain curriculum](../mjlab/tasks/velocity/mdp/curriculums.py) moves a

@@ -711,6 +711,13 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
   # History: v1 lay down and paddled (planted feet paid most of a per-foot foot_phase),
   # v2 fell on purpose (living cost more than one fall), v3 vibrated between the joint
   # limits (unbounded actions; the clip then hid action_rate).
+  #
+  # Status (Nov 2026): this set never produced a walking policy (v1-v4). The teacher is
+  # now trained through the ladder (config/go2/env_cfgs.py), which uses PGTT's own set and
+  # copies only base_height, leg_contact and joint_limits from here (rung 5). The
+  # -100 termination is being tested on the ladder (scripts/diagnose_collapse.sh).
+  # Each entry: name -> RewardTermCfg(func = the function in mdp/rewards.py or
+  # envs/mdp/rewards.py, weight = per second, params = extra arguments of func).
   ##
 
   rewards = {
@@ -724,8 +731,10 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=1.0,  # PGTT: 0.5
       params={"command_name": "twist", "sigma": 0.25},
     ),
-    "lin_vel_z": RewardTermCfg(func=mdp.lin_vel_z_l2, weight=-2.0),
-    "ang_vel_xy": RewardTermCfg(func=mdp.ang_vel_xy_l2, weight=-0.05),
+    "lin_vel_z": RewardTermCfg(func=mdp.lin_vel_z_l2, weight=-2.0),  # trunk bouncing (vz^2)
+    "ang_vel_xy": RewardTermCfg(func=mdp.ang_vel_xy_l2, weight=-0.05),  # trunk rocking rates^2
+    # Trunk tilt: gx^2 + gy^2 of gravity in the trunk frame (= sin^2 of the tilt). Weak:
+    # a 5 degree lean costs only 0.0015/s.
     "orientation": RewardTermCfg(func=mdp.flat_orientation_l2, weight=-0.2),  # PGTT 0
     # Per episode end (not time-out): -100 x dt = -2, on top of the lost future reward.
     # Added after the only_positive_rewards clip, so it always applies (PGTT has it
@@ -738,11 +747,13 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=-50.0,
       params={"sensor_name": "height_scanner", "target": 0.25},
     ),
-    "joint_power": RewardTermCfg(func=mdp.joint_power, weight=-2e-5),
+    "joint_power": RewardTermCfg(func=mdp.joint_power, weight=-2e-5),  # |torque| x |speed|, watts
     # On tanh-bounded actions: vibrating +-1 every step costs 0.48/s, a smooth gait
     # < 0.01/s. PGTT's -0.001 would make vibration free.
     "action_rate": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.01),
+    # Radians past the soft joint limits (90% of the real range), summed: 0 inside them.
     "joint_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-1.0),  # PGTT 0
+    # sum of w x (joint - standing angle)^2; the Go2 config sets w = 1 hips, 0 others.
     "default_pose": RewardTermCfg(  # PGTT: hips only (per-robot weights)
       func=mdp.weighted_default_pose,
       weight=-0.5,
@@ -751,20 +762,20 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
         "weights": {},  # Set per-robot.
       },
     ),
-    "joint_torques": RewardTermCfg(func=mdp.joint_torques_l2, weight=-1e-5),
+    "joint_torques": RewardTermCfg(func=mdp.joint_torques_l2, weight=-1e-5),  # sum torque^2
     "foot_phase": RewardTermCfg(  # exp of the error summed over the 4 feet: max 1.0
-      func=mdp.foot_phase_tracking,
+      func=mdp.foot_phase_tracking,  # heights above the ground (the ladder measures from the IMU)
       weight=1.0,  # PGTT
       params={
-        "command_name": "gait",
-        "sensor_name": "height_scanner",
+        "command_name": "gait",  # the phase clock that says which foot swings when
+        "sensor_name": "height_scanner",  # finds the ground and steps around each foot
         "stance_height": 0.0,  # Set per-robot (foot site height when standing).
-        "swing_height": 0.08,
+        "swing_height": 0.08,  # swing apex 8 cm above the ground, + the nearby step height
         # PGTT code: 0.05 m^2 on the summed squared error. Loose: all four feet 5 cm
         # off still scores 0.82; the gait timing is enforced by swing_contact.
         "sigma": 0.05,
-        "terrain_radius": 0.15,
-        "max_terrain_delta": 0.15,
+        "terrain_radius": 0.15,  # steps within 15 cm of a foot raise its swing apex
+        "max_terrain_delta": 0.15,  # by at most 15 cm
         "asset_cfg": SceneEntityCfg("robot"),
       },
     ),
@@ -819,8 +830,8 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=0.0,
       params={"command_name": "twist"},
     ),
-    "joint_vel": RewardTermCfg(func=mdp.joint_vel_l2, weight=0.0),
-    "joint_acc": RewardTermCfg(func=mdp.joint_acc_l2, weight=0.0),
+    "joint_vel": RewardTermCfg(func=mdp.joint_vel_l2, weight=0.0),  # sum joint speed^2
+    "joint_acc": RewardTermCfg(func=mdp.joint_acc_l2, weight=0.0),  # sum joint acceleration^2
     "action_smoothness": RewardTermCfg(func=mdp.action_acc_l2, weight=0.0),  # 2nd difference
     # Always 0: logs Metrics/hack/* (base height, ground contact, speed ratio, ...) so
     # reward hacking shows in TensorBoard (see mdp/hacking_monitor.py). Weight must be
@@ -833,18 +844,24 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
   ##
 
   terminations = {
+    # 20 s reached. time_out=True marks it as a time limit, not a failure: PPO still
+    # counts the future reward the robot would have earned, and `termination` doesn't fire.
     "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
+    # The trunk tilted more than 90 degrees (on its side or back): a real fall.
     "fell_over": TerminationTermCfg(
       func=mdp.bad_orientation,
       params={"limit_angle": math.radians(90.0)},
     ),
   }
+  # The Go2 config (env_cfgs.py) adds "body_contact": trunk or hip on the ground.
 
   ##
   # Curriculum
   ##
 
   curriculum = {
+    # At each reset: a robot that walked more than half its tile moves to a harder row,
+    # one that covered less than half its commanded distance moves to an easier one.
     "terrain_levels": CurriculumTermCfg(
       func=mdp.terrain_levels_vel,
       params={"command_name": "twist"},
@@ -864,19 +881,22 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
     "foot_slip",
     "leg_contact",
   ):
+    # One curriculum term per penalty, e.g. "ramp_action_rate": its weight is scaled
+    # from 0.1x to 1x over 1500 iterations x 24 steps. (The ladder removes all of them.)
     curriculum[f"ramp_{reward_name}"] = CurriculumTermCfg(
       func=mdp.reward_weight_ramp,
       params={"reward_name": reward_name, "start_scale": 0.1, "ramp_steps": 1500 * 24},
     )
 
+  # Put everything together into the environment config.
   return ManagerBasedRlEnvCfg(
     scene=SceneCfg(
       terrain=TerrainImporterCfg(
-        terrain_type="generator",
-        terrain_generator=replace(PGTT_MIXED_TERRAINS_CFG),
-        max_init_terrain_level=3,
+        terrain_type="generator",  # generated tiles (not a plane)
+        terrain_generator=replace(PGTT_MIXED_TERRAINS_CFG),  # flat, stairs, rough, slopes, waves
+        max_init_terrain_level=3,  # robots start on the easiest 4 rows
       ),
-      num_envs=1,
+      num_envs=1,  # overwritten by --env.scene.num-envs (4096 for training)
       extent=2.0,
     ),
     observations=observations,
@@ -899,13 +919,13 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
       nconmax=64,
       njmax=400,
       mujoco=MujocoCfg(
-        timestep=0.005,
-        iterations=10,
+        timestep=0.005,  # physics step: 5 ms (200 Hz)
+        iterations=10,  # contact solver iterations per physics step
         ls_iterations=20,
       ),
     ),
-    decimation=4,
-    episode_length_s=20.0,
+    decimation=4,  # 4 physics steps per policy step: the policy acts every 20 ms (50 Hz)
+    episode_length_s=20.0,  # 1000 policy steps
     # flat_v2 walked by iteration 500, then the penalty ramp pushed the summed reward
     # below 0 and it learned to fall within a second instead of paying for 20 s. PGTT
     # clips the same way. See ManagerBasedRlEnvCfg.only_positive_rewards.

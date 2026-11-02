@@ -4,9 +4,23 @@ Everything here runs from the repo root with the venv active:
 
 ```bash
 cd ~/unitree_rl_mjlab && source .venv/bin/activate
-T=Mjlab-Velocity-PGTT-Teacher-Unitree-Go2      # stage 1: teacher (PPO)
+T=Mjlab-Velocity-PGTT-Rung7-Unitree-Go2        # stage 1: teacher (PPO), the top of the ladder
 S=Mjlab-Velocity-PGTT-Student-Unitree-Go2      # stage 2: student (distillation)
 ```
+
+**Which teacher task.**
+- The teacher is now trained through the ladder: `Mjlab-Velocity-PGTT-Repro-Unitree-Go2`,
+  `...-Repro-Smooth-...`, then `...-Rung1-...` to `...-Rung7-...` (experiment `go2_pgtt_repro`).
+  Set `T` to the rung you work on, e.g. `T=Mjlab-Velocity-PGTT-Rung4-Unitree-Go2`.
+- The old `Mjlab-Velocity-PGTT-Teacher-Unitree-Go2` (`go2_pgtt_teacher`) never walked (runs
+  v1-v4, doc/reward_hacking_runs_1-3.md).
+- **`scripts/pgtt.sh` still uses the old Teacher and Student tasks.** Its `config`, `debug`,
+  `smoke` and `teacher` commands show or train the old teacher. For a rung, use the
+  `python scripts/...` form with `$T`. The flags and `MJLAB_*` switches below work the same on
+  every task.
+
+Training runs, tmux, finding checkpoints, the hack check and the viewer on the GPU machine:
+**COMMANDS.md**.
 
 ## 0. The three ways to change things
 
@@ -302,7 +316,12 @@ MJLAB_DROP=event:actuator_delay,event:pd_gains ...          # no motor randomiza
 Event names: `reset_base`, `reset_robot_joints`, `push_robot`, `external_wrench`,
 `body_friction`, `base_mass`, `base_com`, `pd_gains`, `effort_limits`, `actuator_delay`,
 `link_mass`, `joint_friction`, `joint_armature`, `encoder_bias`.
-Termination names: `time_out`, `fell_over`.
+Termination names: `time_out`, `fell_over`, and from rung 1 on `body_contact` (trunk or a hip
+on the ground).
+
+The events above are the teacher's, used in full from rung 4 on. Rungs 0-3 randomize with PGTT's
+narrower ranges (rung 2 adds the motor delay, rung 3 the two pushes). The table in
+doc/reward_hacking_runs_1-3.md, "Rung 4", shows both sets of ranges.
 
 If you change the twist ranges, the robot's joystick limits follow (they are exported). The
 deploy gait frequency must stay inside `frequency-range`; export checks this.
@@ -316,7 +335,18 @@ deploy gait frequency must stay inside `frequency-range`; export checks this.
 scripts/pgtt.sh teacher --agent.run-name sigma004 --env.rewards.foot-phase.params.sigma 0.004
 scripts/pgtt.sh teacher --agent.run-name no_friction_priv   # with MJLAB_DROP=...
 ```
-Runs go to `logs/rsl_rl/go2_pgtt_teacher/<date>_<run-name>/`.
+Runs go to `logs/rsl_rl/<experiment>/<date>_<time>_<run-name>/`: `go2_pgtt_repro` for the repro
+and rung tasks, `go2_pgtt_teacher` for the old teacher, `go2_pgtt_student` for the student.
+For a rung, the same flags go after `python scripts/train.py $T --env.scene.num-envs=4096`.
+Negative values need `=`: `--env.rewards.termination.weight=-100`.
+
+**Compare runs side by side in the terminal** (hack check verdict + episode length, noise std,
+falls at iterations 200 / 800 / last):
+```bash
+python scripts/summarize_runs.py rung3_pushes rung4_randomization <your run name>
+```
+A run that learns and then gets worse shows here as episode length falling after its peak and
+the noise std turning back up.
 
 **Watch live while it trains** (second terminal):
 ```bash
@@ -364,9 +394,9 @@ Live, in TensorBoard during training: `Metrics/hack/*` (logged by the zero-weigh
 | `Metrics/hack/feet_down_moving` | below 0.5 | near 1: shuffling / sliding |
 | `Metrics/hack/leg_ground_frac` | near 0 | high: kneeling, dragging legs |
 | `Metrics/hack/body_ground_frac` | near 0 | above 0: trunk/hips on the ground |
-| `Episode_Termination/body_contact` | falls over training | stays high: keeps lying down |
-| `Train/mean_episode_length` | rises to ~1000 and stays | drops to tens of steps: falls on purpose |
-| `Policy/mean_noise_std` | falls below 1 | climbs (capped at 1.0 now): flails |
+| `Episode_Termination/body_contact` | falls over training, towards 0 | stays high: keeps lying down; **rises after ~200 iterations: the policy is getting worse** (rungs 4-5) |
+| `Train/mean_episode_length` | rises to ~1000 and stays | drops to tens of steps: falls on purpose; **falls again after its peak** (rung 4: 811 → 173) |
+| `Policy/mean_noise_std` | falls (0.7 → 0.2-0.3) and keeps falling | climbs (capped at 1.0 for the old teacher): flails; **turns back up** after falling (rung 4: 0.29 → 0.39) |
 | `Metrics/hack/action_jitter` | up to ~0.25 (a full-range 3 Hz gait gives 0.24) | above 0.8: joints slammed back and forth (vibration) |
 | `Metrics/hack/action_saturation` | below 0.2 | above 0.5: actions stuck at ±1 (bang-bang control, flat_v4) |
 | `Metrics/hack/action_tremor` | below 0.1 (any gait of at most 3 Hz stays below 0.09) | above 0.1: fast tremor on top of the gait (repro0: 0.37) |
@@ -394,7 +424,8 @@ formula follow the official PGTT code too.
 On a checkpoint (CPU, works on old checkpoints too), with an OK / WARN / HACK verdict per check
 and which reward terms the score comes from:
 ```bash
-scripts/pgtt.sh hacks teacher                         # newest teacher checkpoint
+python scripts/check_reward_hacking.py --checkpoint-file <model.pt>     # any checkpoint (add --device cuda:0 on the GPU machine)
+scripts/pgtt.sh hacks teacher                         # newest checkpoint of the old teacher task
 scripts/pgtt.sh hacks student <model.pt> --terrain stairs
 scripts/pgtt.sh hacks watch logs/rsl_rl/go2_pgtt_teacher/<run>   # every new checkpoint while training
 ```
@@ -404,6 +435,17 @@ the run and fix the rewards instead of waiting for the end.
 
 The trunk/hip ground contact termination (`body_contact`) is what stops the lying-down trick:
 lying now ends the episode and loses all future reward.
+
+**The check runs without randomization** (nominal robot, no pushes). Rung 4 got WARN there
+while its training was collapsing: its heavy, weak and slippery training robots were the ones
+falling. Always read the training curves next to it (`summarize_runs.py`, above).
+
+**A fall costs very little in the PGTT reward.** `termination` is −1 × dt = −0.02 per fall,
+added after the zero clip. The rest of the cost is the reward the robot no longer collects. If
+some robots earn little anyway, the policy loses little by letting them fall. Raising it
+(`--env.rewards.termination.weight=-100`, −2 per fall) is safe under the clip, since every
+step pays ≥ 0. But on its own it made rung 4 kneel in place, because kneeling was free there:
+price the fall and the kneel together (`leg_contact`, rung 5+).
 
 **Then export and check the deploy files:**
 ```bash
@@ -452,7 +494,10 @@ Tip: add new rewards with weight 0. They then cost nothing until you switch them
 | stairs height | `--env.scene.terrain.terrain-generator.sub-terrains.stairs-up-30.step-height-range a b` |
 | no noise | `--env.observations.<group>.enable-corruption False` |
 | quick test | `scripts/pgtt.sh smoke teacher <flags>` |
-| real run | `scripts/pgtt.sh teacher --agent.run-name <name> <flags>` |
+| real run (a rung) | `python scripts/train.py $T --env.scene.num-envs=4096 --agent.run-name <name> <flags>`, in tmux (COMMANDS.md 4) |
+| real run (old teacher) | `scripts/pgtt.sh teacher --agent.run-name <name> <flags>` |
 | watch | `scripts/pgtt.sh tb` / `scripts/pgtt.sh play teacher` |
+| hack check | `python scripts/check_reward_hacking.py --checkpoint-file <pt> --device cuda:0` |
+| compare runs | `python scripts/summarize_runs.py <run name> <run name> ...` |
 | measure | `python scripts/evaluate_pgtt.py --checkpoint-file <pt>` |
 | find a flag | `python scripts/train.py $T --help \| grep <word>` |

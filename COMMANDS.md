@@ -77,25 +77,33 @@ changes, don't force it: `git status` shows which files, and ask before throwing
 A program started in a plain ssh window dies when the window closes or the WiFi drops. Inside
 tmux it keeps running, and you can come back to it later, even from another computer.
 
+A session has a name you choose. These are the ones used so far: `train` (single runs), `ladder`
+(`train_ladder.sh`), `diag` (`diagnose_collapse.sh`), `teacher` (the full teacher). In the
+commands below, **`<SESSION>`** is that name; `tmux ls` lists the ones that exist.
+
 | I want to | Command |
 |---|---|
-| start a new session called `train` | `tmux new -s train` |
+| start a new session and go into it | `tmux new -s <SESSION>`, e.g. `tmux new -s train` |
+| start a command in a new session **without going in** (one line, safest) | `tmux new -d -s <SESSION> '<COMMAND>; exec bash'` (section 4 has the exact lines) |
 | leave it running and get back to the normal terminal (detach) | press **Ctrl+B**, let go, then press **D** |
 | see which sessions exist | `tmux ls` |
-| go back into the session (attach) | `tmux attach -t train` |
+| go back into the session (attach) | `tmux attach -t <SESSION>`, e.g. `tmux attach -t diag` |
 | open a second window in the same session | **Ctrl+B**, then **C** |
 | switch windows | **Ctrl+B**, then **N** (next) or **P** (previous), or **Ctrl+B** then the window number **0**, **1**, ... |
 | scroll up to read older output | **Ctrl+B**, then **[**, then arrow keys / PgUp; press **q** to stop scrolling |
 | close the current window | type `exit` (only when nothing is running in it) |
-| delete a whole session (kills what runs in it!) | `tmux kill-session -t train` |
+| delete a whole session (kills what runs in it!) | `tmux kill-session -t <SESSION>` |
 
-- `duplicate session: train`: that session already exists. Go into it with `tmux attach -t train`,
-  or use another name, e.g. `tmux new -s train2`.
-- `no sessions` / `can't find session`: nothing is running in tmux (the machine may have
-  rebooted). Check with `tmux ls`.
+- `duplicate session: <SESSION>`: that session already exists (often: the first command worked).
+  Go into it with `tmux attach -t <SESSION>`, or use another name.
+- `no sessions` / `can't find session`: no session with that name. `tmux ls` lists the ones that
+  exist; attach to one of those.
+- `no server running`: **no** tmux session exists at all. Almost always the machine rebooted,
+  which kills every session and the training in it. Section 13, "rebooted".
 - `sessions should be nested with care`: you're already inside tmux. Detach first (**Ctrl+B**, **D**).
 - The ssh connection dropped? Training in tmux is fine. Log in again (section 1) and
-  `tmux attach -t train`.
+  `tmux attach -t <SESSION>`.
+- **Ctrl+C** inside a session stops what runs there. To leave it running, always **Ctrl+B**, **D**.
 
 A good layout: session `train` with window 0 for training, window 1 for TensorBoard
 (section 9), window 2 for checks and the viewer. Each new window: run the `cd ... && source ...`
@@ -118,7 +126,8 @@ line of section 1 first.
     starts at 0);
   - `events.out.tfevents...` : the graphs for TensorBoard;
   - `params/env.yaml`, `params/agent.yaml` : the exact settings it trained with;
-  - `hacking_check.txt` : the check's result (ladder runs only, section 4).
+  - `hacking_check.txt` : the check's result (written by the ladder and the diagnosis, or by you
+    with section 10).
 
 **The tasks and the run names used for them:**
 
@@ -134,7 +143,21 @@ line of section 1 first.
 | `Mjlab-Velocity-PGTT-Rung6-Unitree-Go2` | `rung6_commands` | + full command range, 5% standing | 1500 |
 | `Mjlab-Velocity-PGTT-Rung7-Unitree-Go2` | `rung7_terrain` | + stairs, slopes, rough ground: **the full teacher** | 6000 |
 
-Each rung contains everything above it in the table. Old teacher runs (v1-v4, don't walk) are in
+Each rung contains everything above it in the table.
+
+**Runs with a setting changed on the command line** (section 4b, "Change a setting"): same task,
+own run name.
+
+| Run name | Task | Changed | Started by |
+|---|---|---|---|
+| `rung4_term100` | Rung4 | `termination` −100 | by hand |
+| `r5_term100` | Rung5 | `termination` −100 | `diagnose_collapse.sh` (4c) |
+| `r4_ent001` | Rung4 | entropy bonus 0.001 | `diagnose_collapse.sh` |
+| `r5_term100_ent001` | Rung5 | both | `diagnose_collapse.sh` |
+| `r6_term100` | Rung6 | `termination` −100 | `diagnose_collapse.sh` |
+| `teacher_full` | Rung7 | the winning settings, 10000 iterations | by hand (4d) |
+
+The settings a run really used are in its `params/env.yaml` and `params/agent.yaml`. Old teacher runs (v1-v4, don't walk) are in
 `logs/rsl_rl/go2_pgtt_teacher/`.
 
 ---
@@ -142,17 +165,37 @@ Each rung contains everything above it in the table. Old teacher runs (v1-v4, do
 ## 4. Train
 
 All on the **GPU machine**, inside tmux (section 2), in the repo with the venv active (section 1).
-One training at a time: two at once both run at half speed or run out of GPU memory.
+One training at a time: two at once both run at half speed or run out of GPU memory. Check
+first that nothing is training: `nvidia-smi` (section 5).
 
-### 4a. The whole ladder, rung 1 to 7 (the normal way to get the full teacher)
+**How long:** about **7 s per iteration** on the 3070, so **~2 h per 1000 iterations** (1500
+take ~3 h). The box printed after each iteration shows `Iteration time:` and the time left
+(`ETA:`). Much slower than 7 s (e.g. 20 s) means something else is using the machine.
+
+**Two ways to start anything in this section** (the scripts and single runs alike):
+- **One line, safest.** It makes the tmux session, runs the command in it and keeps the window
+  open afterwards (`exec bash`), so you can read the end even after a crash:
+  ```bash
+  tmux new -d -s <SESSION> 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && <COMMAND>; exec bash'
+  tmux attach -t <SESSION>
+  ```
+  **`<COMMAND>`**: the command from 4a-4d, e.g. `bash scripts/train_ladder.sh`. A command that
+  itself contains `'` can't go inside the quotes; use the other way.
+- **By hand.** `tmux new -s <SESSION>`, then type the `cd ... && source ...` line of section 1,
+  then the command.
+
+Either way, when the first `Learning iteration 0/...` box appears, detach: **Ctrl+B**, then **D**.
+Starting it in a plain ssh window (without tmux) kills it when the window closes or you press
+Ctrl+C.
+
+### 4a. The whole ladder, rung 1 to 7
 
 ```bash
-tmux new -s train
-cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && source .venv/bin/activate && git pull
-bash scripts/train_ladder.sh
+tmux new -d -s ladder 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && bash scripts/train_ladder.sh; exec bash'
+tmux attach -t ladder
 ```
-- Trains rung 1, checks it, trains rung 2, and so on. About 9 h for rungs 1-6 and 6 h for
-  rung 7.
+- Trains rung 1, checks it, trains rung 2, and so on. About 3 h per rung for rungs 1-6 and
+  12 h or more for rung 7 (6000 iterations, with terrain).
 - After each rung it runs the reward-hacking check and saves the result as
   `hacking_check.txt` in that rung's run folder. If a rung gets a HACK verdict, the script
   **stops** there and prints `FAILED`, so the problem is that rung's one change.
@@ -161,7 +204,8 @@ bash scripts/train_ladder.sh
 
 **Start from a later rung** (after a crash, after you stopped it, or after fixing a failed rung):
 ```bash
-bash scripts/train_ladder.sh <FIRST_RUNG>
+tmux new -d -s ladder 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && bash scripts/train_ladder.sh <FIRST_RUNG>; exec bash'
+tmux attach -t ladder
 ```
 - **`<FIRST_RUNG>`**: the first rung that hasn't finished, a number 1-7. To see which rungs
   finished: `ls logs/rsl_rl/go2_pgtt_repro/*_rung*/hacking_check.txt`. A rung with that
@@ -169,6 +213,10 @@ bash scripts/train_ladder.sh <FIRST_RUNG>
   lists `..._rung1_collisions/...` and `..._rung2_delays/...`: run
   `bash scripts/train_ladder.sh 3`.
 - A rung that was interrupted starts again from zero (the half-finished folder stays; ignore it).
+- **After the motor fix (2 Nov):** rungs 4+ have to run again, because the old ones were trained with
+  motors that weakened at every reset (`doc/reward_hacking_runs_1-3.md`, "Root cause"). Start at
+  4: `bash scripts/train_ladder.sh 4`, after a `git pull`. The new run folders get the same names
+  with a newer date, and every command here takes the newest.
 
 ### 4b. One task on its own
 
@@ -176,45 +224,97 @@ bash scripts/train_ladder.sh <FIRST_RUNG>
 CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py <TASK> --env.scene.num-envs=4096 --agent.max-iterations=<ITERATIONS> --agent.run-name <RUN_NAME>
 ```
 - **`<TASK>`**: a task from the table in section 3.
-- **`<ITERATIONS>`**: from the same table (about 1 h per 1000 on the 3070).
+- **`<ITERATIONS>`**: from the same table (~2 h per 1000 on the 3070).
 - **`<RUN_NAME>`**: from the same table. For a second try of the same task, add something,
   e.g. `rung1_collisions_seed2`.
 
-Example, rung 1 alone:
+Example, rung 1 alone, started in tmux in one line:
 ```bash
-CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung1-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=1500 --agent.run-name rung1_collisions
+tmux new -d -s train 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung1-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=1500 --agent.run-name rung1_collisions; exec bash'
+tmux attach -t train
 ```
 A different random seed (same task, to check a result wasn't luck): add `--agent.seed 2`.
 
 The run folder is printed near the start, on the line
 `[INFO] Logging experiment in directory: ...`.
 
-### 4c. The collapse diagnosis (four runs back to back, ~6 h)
+A single run does **not** run the hack check by itself. Run it when training ends (section 10)
+and save the result into the run folder, like the scripts do.
+
+**Change a setting** without touching the code: add it to the end of the command. Always give
+the run a new name that says what changed.
+
+| Change | Add |
+|---|---|
+| a reward weight | `--env.rewards.<TERM>.weight=<VALUE>`, e.g. `--env.rewards.termination.weight=-100` |
+| the entropy bonus | `--agent.algorithm.entropy-coef=<VALUE>`, e.g. `0.001` (default 0.01) |
+| the learning rate | `--agent.algorithm.learning-rate=<VALUE>` (default 3e-4) |
+| the random seed | `--agent.seed <N>` |
+| number of robots | `--env.scene.num-envs=<N>` (4096 normally; fewer only for a quick test) |
+
+- **`<TERM>`**: a reward name as listed in `doc/reward_hacking_runs_1-3.md`, "How the reward is
+  computed", **with every `_` written as `-`**: `termination`, `leg-contact`, `base-height`,
+  `foot-phase`, `action-acc`. E.g. `--env.rewards.leg-contact.weight=-0.5`.
+- Every other setting works the same way. To find the exact name of one:
+  `python scripts/train.py <TASK> --help | grep -i <WORD>`, e.g. `grep -i entropy`.
+- Use `=` between the option and a negative value (`weight=-100`); with a space the `-100` is
+  read as a new option.
+- A misspelled option stops the run straight away with an error that lists the valid ones.
+- **Did it take effect?** `grep -A3 "termination:" $RUN/params/env.yaml` (section 7 for `$RUN`)
+  shows the weight the run used. In this file the names keep their `_`.
+
+### 4c. The collapse diagnosis (four runs back to back, ~12 h)
+
+**Done, no need to run it again (2 Nov).** Two of its runs were enough, and the cause turned out
+to be a bug (the motors weakened at every reset), now fixed. Kept here for reference.
 
 ```bash
-tmux new -s diag
-cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && source .venv/bin/activate && git pull
-bash scripts/diagnose_collapse.sh
+tmux new -d -s diag 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && bash scripts/diagnose_collapse.sh; exec bash'
+tmux attach -t diag
 ```
 - Runs `r5_term100`, `r4_ent001`, `r5_term100_ent001` and `r6_term100` (1500 iterations
   each) and checks each one. It does **not** stop at a HACK.
 - At the end it prints one table comparing them with rungs 3-5. It also saves the table to
   `logs/rsl_rl/go2_pgtt_repro/diagnosis.txt`; read it later with
   `cat logs/rsl_rl/go2_pgtt_repro/diagnosis.txt`.
-- **Start from a later experiment** (after a crash or a stop): `bash scripts/diagnose_collapse.sh <N>`,
-  where `<N>` is 1-4 in the order above.
-- **The table again at any time**, for any runs:
-  `python scripts/summarize_runs.py <RUN_NAME> <RUN_NAME> ...`
+- **Start from a later experiment** (after a crash, a stop or a reboot): put the number after the
+  script, `bash scripts/diagnose_collapse.sh <N>`, in the same one-line tmux command. **`<N>`** is
+  the first experiment without a `hacking_check.txt`:
+  ```bash
+  ls logs/rsl_rl/go2_pgtt_repro/*_r[456]_*/hacking_check.txt
+  ```
+  Order: 1 `r5_term100`, 2 `r4_ent001`, 3 `r5_term100_ent001`, 4 `r6_term100`. E.g. only
+  `..._r5_term100/hacking_check.txt` is listed: `<N>` is 2. Nothing listed: 1.
+- **The table again at any time**, for any runs: section 9d.
 - What each run tests and how to read the result: `doc/reward_hacking_runs_1-3.md`,
-  "Rungs 4 and 5 collapse".
+  "The diagnosis batch".
+
+### 4d. The full teacher (10000 iterations, about a day)
+
+Only after the diagnosis (4c) says which settings to use (`doc/reward_hacking_runs_1-3.md`,
+"The diagnosis batch", what each outcome means). With `termination` −100:
+```bash
+tmux new -d -s teacher 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung7-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=10000 --agent.run-name teacher_full --env.rewards.termination.weight=-100; exec bash'
+tmux attach -t teacher
+```
+- If the diagnosis says the entropy bonus must go down too, add
+  `--agent.algorithm.entropy-coef=0.001` before `; exec bash`.
+- ~20 h at 7 s per iteration, maybe more with terrain. A reboot in that time kills it: continue
+  from its last checkpoint (section 6) instead of starting again.
+- Watch the curves in the first ~1000 iterations (sections 9c, 9d). If episodes get shorter
+  again or the noise std turns up, stop it there rather than waiting a day.
+- When it ends: hack check (section 10) on the last checkpoint, plus once with
+  `--terrain stairs`, then `eval_gait.py` (section 11).
 
 ---
 
 ## 5. Is it running? How far is it?
 
-**Look at it directly:** `tmux attach -t train`. The box at the bottom shows
-`Learning iteration <done>/<total>` and the time left (`ETA`). Leave with **Ctrl+B**, **D**
-(not Ctrl+C, that stops it).
+**Look at it directly:** `tmux ls` to see the session names, then `tmux attach -t <SESSION>`.
+The box at the bottom shows `Learning iteration <done>/<total>`, `Iteration time:` (~7 s is
+normal) and the time left (`ETA`). Leave with **Ctrl+B**, **D** (not Ctrl+C, that stops it).
+Scripts print a line starting with `===` at every step (which experiment or rung, when it
+started).
 
 **Without attaching:**
 ```bash
@@ -234,20 +334,30 @@ ls logs/rsl_rl/go2_pgtt_repro/*_<RUN_NAME>/model_*.pt | sort -V | tail -1
 - **`<RUN_NAME>`**: from the table in section 3, e.g. `rung1_collisions`.
 - Prints the newest checkpoint; its number is roughly how far it got (saved every 100 iterations).
 
-**Ladder progress:** which rungs are done, and their verdicts:
+**Which runs are finished and checked**, with their verdicts (ladder, diagnosis and any run you
+checked into its folder):
 ```bash
-grep -H "overall" logs/rsl_rl/go2_pgtt_repro/*_rung*/hacking_check.txt
+grep -H "overall" logs/rsl_rl/go2_pgtt_repro/*/hacking_check.txt
 ```
+A run folder without `hacking_check.txt` is still training, was interrupted, or was never
+checked.
+
+**Is anything running at all?**
+```bash
+ps aux | grep -c "[s]cripts/train.py"
+```
+`0`: nothing is training. `1` or more: that many trainings are running.
 
 ---
 
 ## 6. Stop, restart, continue
 
-**Stop a training (or the ladder):** `tmux attach -t train`, then **Ctrl+C**. Press it once
-and wait; the ladder may need a second **Ctrl+C** to stop starting the next step. Checkpoints
+**Stop a training (or a script):** `tmux attach -t <SESSION>`, then **Ctrl+C**. Press it once
+and wait; a script may need a second **Ctrl+C** to stop starting the next step. Checkpoints
 already saved stay.
 
-**Restart the ladder from a rung:** section 4a.
+**Restart the ladder from a rung:** section 4a. **The diagnosis from an experiment:** section 4c.
+A run inside a script that was interrupted starts again from zero.
 
 **Continue a stopped single run from its last checkpoint** (instead of from zero):
 ```bash
@@ -262,6 +372,9 @@ CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py <TAS
   Always give it: without it, "latest" is chosen alphabetically and `model_900.pt` would win
   over `model_1500.pt`.
 - It saves into a new folder ending in `_<RUN_NAME>_resumed`.
+- Add the same changed settings the run was started with (4b), e.g.
+  `--env.rewards.termination.weight=-100` for `teacher_full`. They are not taken from the
+  checkpoint.
 
 ---
 
@@ -278,7 +391,7 @@ Same commands on both machines, from the repo folder. On the **GPU machine** run
 | all its checkpoints, in order | `ls logs/rsl_rl/go2_pgtt_repro/*_<RUN_NAME>/model_*.pt \| sort -V` | `.../model_0.pt` ... `.../model_1499.pt` |
 | its newest checkpoint | `ls logs/rsl_rl/go2_pgtt_repro/*_<RUN_NAME>/model_*.pt \| sort -V \| tail -1` | `logs/rsl_rl/go2_pgtt_repro/2026-11-01_09-12-40_rung1_collisions/model_1499.pt` |
 | one particular checkpoint | `ls logs/rsl_rl/go2_pgtt_repro/*_<RUN_NAME>/model_1000.pt` | `.../model_1000.pt` |
-| its hacking check (ladder) | `cat logs/rsl_rl/go2_pgtt_repro/*_<RUN_NAME>/hacking_check.txt` | the OK / WARN / HACK table |
+| its hacking check (if it has one, section 10) | `cat logs/rsl_rl/go2_pgtt_repro/*_<RUN_NAME>/hacking_check.txt` | the OK / WARN / HACK table |
 
 | I want | Command (laptop) |
 |---|---|
@@ -384,9 +497,9 @@ Use `--logdir logs/remote/<RUN_NAME>`.
 
 | Graph | Healthy |
 |---|---|
-| `Train/mean_episode_length` | climbs to ~1000 by iteration ~100 and stays (rung 1+: dips mean falls) |
+| `Train/mean_episode_length` | climbs to ~1000 by iteration ~100 and **stays** (rung 1+: dips mean falls; rung 4 fell from 811 to 173 = collapse) |
 | `Metrics/hack/speed_ratio` | above 0.9 (rung 7 on stairs: above 0.65) |
-| `Policy/mean_noise_std` | falls (0.7 → ~0.3); stuck at 1.0 was v4's entropy bug |
+| `Policy/mean_noise_std` | falls (0.7 → ~0.2-0.3) and **keeps falling**; turning back up (rung 4: 0.29 → 0.39) means the policy is getting worse; stuck at 1.0 was v4's entropy bug |
 | `Metrics/hack/action_saturation` | below 0.05 |
 | `Metrics/hack/action_tremor` | below 0.15 (repro0, without the smoothness penalty: ~0.35) |
 | `Metrics/hack/body_ground_frac`, `leg_ground_frac` | ~0 (rung 1+) |
@@ -394,20 +507,49 @@ Use `--logdir logs/remote/<RUN_NAME>`.
 | `Episode_Reward/*` | track_lin near 1.0, track_ang near 0.5, foot_phase near 1.0 |
 | `Curriculum/terrain_levels` | rises over training (rung 7 only) |
 
+### 9d. The important curves in the terminal (no browser needed)
+
+GPU machine, repo folder, venv active:
+```bash
+python scripts/summarize_runs.py <RUN_NAME> <RUN_NAME> ...
+```
+- **`<RUN_NAME>`**: one or more run names (section 3), e.g.
+  `python scripts/summarize_runs.py rung3_pushes r5_term100`. Put a healthy run (`rung3_pushes`)
+  next to the one you're judging.
+- Per run: its hack check verdict (if it has a `hacking_check.txt`) and episode length, noise
+  std and body-contact endings at iteration 200, 800 and the newest one. Works while a run
+  still trains. It takes the newest folder with that name.
+- Healthy looks like rung 3: episode length stays above 900, noise std keeps falling, body-contact
+  endings go towards 0.
+
 ---
 
 ## 10. Reward-hacking check
 
 Runs the policy without noise and prints OK / WARN / HACK for each behaviour (lying down,
 kneeling, ignoring the command, vibrating, falling, ...), plus where the reward comes from.
-About 1 min on the GPU, 2 min on the laptop. The ladder runs it by itself after each rung
-(`hacking_check.txt`, section 7).
+About 1 min on the GPU, 2 min on the laptop. The ladder and the diagnosis run it by themselves
+after each run (`hacking_check.txt`, section 7).
 
-**One checkpoint, GPU machine** (free tmux window):
+**It tests the robot without randomization** (nominal mass, motors and friction, no pushes). A
+policy that only falls apart on heavy, weak or slippery robots passes it anyway: rung 4 got WARN
+while its training episodes had shrunk from 811 to 173 steps. So always look at the training
+curves too (section 9d).
+
+**The newest checkpoint of a run, GPU machine** (free tmux window), saved into the run folder:
+```bash
+RUN=$(ls -d logs/rsl_rl/go2_pgtt_repro/*_<RUN_NAME> | tail -1); CKPT=$(ls $RUN/model_*.pt | sort -V | tail -1); echo $CKPT
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/check_reward_hacking.py --checkpoint-file $CKPT --device cuda:0 | tee $RUN/hacking_check.txt
+```
+- **`<RUN_NAME>`**: section 3, e.g. `r5_term100`.
+- The last line of the output, `overall: OK / WARN / HACK`, is the verdict. Under it: which
+  metric failed and where the reward comes from.
+- Without `--device cuda:0` it runs on the CPU and looks stuck for an hour.
+
+**Any one checkpoint, GPU machine:**
 ```bash
 CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/check_reward_hacking.py --checkpoint-file <CHECKPOINT> --device cuda:0
 ```
-Without `--device cuda:0` it runs on the CPU and looks stuck for an hour.
 
 **One checkpoint, laptop:**
 ```bash
@@ -421,6 +563,16 @@ CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/check_reward_
 - **`<RUN_FOLDER>`**: the folder of the run (section 7, "the folder of one run"), e.g.
   `logs/rsl_rl/go2_pgtt_repro/2026-11-01_09-12-40_rung1_collisions`. One line per checkpoint
   is added to `<RUN_FOLDER>/hacking_check.csv`.
+
+**Under the training conditions, with falls per robot parameter** (T1/T2): add
+`--randomized True --num-envs 1024`. It keeps the domain randomization, pushes, delays and
+noise, and adds a table of falls, legs on the ground and speed for the low / middle / high
+third of each robot parameter (motor strength, Kp/Kd, trunk mass, friction, ...). A parameter
+whose thirds differ a lot is what the falls come from. A few minutes on the GPU:
+```bash
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/check_reward_hacking.py --checkpoint-file $CKPT --device cuda:0 --randomized True --num-envs 1024 | tee $RUN/hacking_check_randomized.txt
+```
+(`--randomized` needs the `True`. Without it, tyro complains about a missing value.)
 
 **On another terrain** (e.g. to see how a flat rung does on stairs): add `--terrain stairs`.
 
@@ -488,10 +640,28 @@ It asks for the password once per run. Runs that don't exist yet print an error;
 | `CUDA out of memory` | another training or viewer is using the 3070: `nvidia-smi` shows it; stop it first |
 | `Unknown task` / task name not accepted | typo, or the code is old: `git pull`, then check the name with `grep task_id mjlab/tasks/velocity/config/go2/__init__.py` |
 | `duplicate session: ...` | `tmux attach -t <name>`, or pick another name |
+| `no server running on /tmp/tmux-...` | no tmux session exists: the machine most likely rebooted. See "rebooted" below |
+| training started in a plain ssh window, then Ctrl+C or the window closed (`KeyboardInterrupt`) | it's dead. Start it again with the one-line tmux command (section 4) |
 | `no matches found` / `No such file` for `*_<RUN_NAME>` | the run name is different or it has no checkpoint yet: `ls -t logs/rsl_rl/go2_pgtt_repro/` |
 | the hacking check prints nothing for a long time | it's on the CPU: **Ctrl+C**, add `--device cuda:0`. Still there (`T` in `ps aux \| grep check_reward`)? `kill -9 <pid>` |
 | laptop crawls or the desktop freezes in the viewer | forgot `--num-envs 1` |
 | `localhost:6006` / `:8080` doesn't load | the ssh window with `-L` is closed, or TensorBoard / play isn't running on the GPU machine, or play hasn't finished starting |
 | `Address already in use` (port 8080 or 6006) on the GPU machine | an old viewer / TensorBoard is still running: find it in your tmux windows and **Ctrl+C** it, or `pkill -f "scripts/play.py"` / `pkill tensorboard` |
 | ladder stopped with `FAILED` | read that rung's `hacking_check.txt` (section 7); the change of that rung (section 3) caused it. Look at it in the viewer before changing anything |
-| the GPU machine rebooted during the ladder | section 1, then `bash scripts/train_ladder.sh <FIRST_RUNG>` (section 4a) |
+| a run is much slower than ~7 s per iteration | something else uses the GPU or CPU: `nvidia-smi`, `top` (press `q` to leave) |
+| **rebooted** during a training | see below |
+
+**The GPU machine rebooted during a training.** A reboot kills every tmux session and the
+training in it. Step by step:
+1. Was it a reboot? `uptime` shows how long the machine has been up (`up 1:05` = 1 h 5 min).
+   Shorter than the training has been going: it rebooted. Nothing trains:
+   `ps aux | grep -c "[s]cripts/train.py"` prints `0`.
+2. Mount the disk and go to the repo: section 1 (the `ls ... || (sudo ... mount ...)` line).
+3. See what finished: `grep -H "overall" logs/rsl_rl/go2_pgtt_repro/*/hacking_check.txt`.
+4. Start again from what didn't finish:
+   - the ladder: section 4a, "Start from a later rung";
+   - the diagnosis: section 4c, "Start from a later experiment";
+   - a single run or the full teacher: continue from its last checkpoint, section 6.
+5. Optional, why it rebooted: `last -x reboot shutdown | head -4`. A `shutdown` just before the
+   `reboot`: someone or an update restarted it. A `reboot` with no `shutdown` before it: a crash
+   or power cut.

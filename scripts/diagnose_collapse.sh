@@ -3,7 +3,7 @@
 # collapse"): four 1500-iteration runs back to back, each followed by the reward-hacking
 # check, then one table comparing them with rungs 3-5 and rung4_term100.
 #
-#   bash scripts/diagnose_collapse.sh        # all four (~6 h)
+#   bash scripts/diagnose_collapse.sh        # all four (~12 h)
 #   bash scripts/diagnose_collapse.sh 3      # start at the third (after a stop or a crash)
 #
 # Unlike train_ladder.sh it does not stop at a HACK: every run answers its own question.

@@ -1,5 +1,18 @@
 from __future__ import annotations
 
+# Reward functions for the velocity tasks.
+#
+# Every function (or class with __call__) here is a reward TERM: the env config pairs it
+# with a weight (RewardTermCfg(func=..., weight=...)), and reward_manager.compute() calls
+# it once per policy step as func(env, **params). It returns one raw value per robot,
+# a tensor of shape [B] (B = number of parallel robots). The manager multiplies it by
+# weight x dt; positive weight = reward, negative = penalty.
+#
+# Top part: the stock mjlab terms (used by the stock Go2/G1 tasks). From "PGTT rewards"
+# down: the terms written for this branch, which the PGTT tasks and the ladder use.
+# Shapes in comments: [B] per robot, [B, L] per robot and leg (L = 4), [B, N] per robot
+# and height-scan ray (N = 99).
+
 import math
 from typing import TYPE_CHECKING
 
@@ -392,6 +405,9 @@ def stand_still(
 ##
 # PGTT rewards (Ntagkas et al. 2025, Table I).
 ##
+# Used by the repro/rung tasks (env_cfgs.unitree_go2_pgtt_repro_env_cfg) and the old
+# teacher task (velocity_env_cfg.make_pgtt_env_cfg). Typical sizes per second, after the
+# weight, are in doc/reward_hacking_runs_1-3.md, "How the reward is computed".
 
 
 def track_lin_vel_xy_exp(
@@ -401,13 +417,17 @@ def track_lin_vel_xy_exp(
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
   """exp(-|v_cmd_xy - v_xy|^2 / sigma), base frame."""
+  # The main task reward: 1 when the trunk moves exactly as commanded, falling smoothly
+  # towards 0 with the error. With sigma 0.25, a 0.5 m/s error still pays exp(-1) = 0.37,
+  # which is why standing still under a slow command keeps a large part of it.
   asset: Entity = env.scene[asset_cfg.name]
-  command = env.command_manager.get_command(command_name)
+  command = env.command_manager.get_command(command_name)  # [B, 3]: vx, vy, yaw rate
   assert command is not None, f"Command '{command_name}' not found."
-  error = torch.sum(
+  error = torch.sum(  # squared xy speed error, [B]
+    # root_link_lin_vel_b: trunk velocity in the trunk's own frame (x forward, y left).
     torch.square(command[:, :2] - asset.data.root_link_lin_vel_b[:, :2]), dim=1
   )
-  return torch.exp(-error / sigma)
+  return torch.exp(-error / sigma)  # [B], in (0, 1]
 
 
 def track_ang_vel_z_exp(
@@ -417,10 +437,11 @@ def track_ang_vel_z_exp(
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
   """exp(-(w_cmd_z - w_z)^2 / sigma), base frame."""
+  # The same for turning: 1 when the yaw rate (rad/s) matches the command.
   asset: Entity = env.scene[asset_cfg.name]
   command = env.command_manager.get_command(command_name)
   assert command is not None, f"Command '{command_name}' not found."
-  error = torch.square(command[:, 2] - asset.data.root_link_ang_vel_b[:, 2])
+  error = torch.square(command[:, 2] - asset.data.root_link_ang_vel_b[:, 2])  # [B]
   return torch.exp(-error / sigma)
 
 
@@ -428,22 +449,27 @@ def lin_vel_z_l2(
   env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG
 ) -> torch.Tensor:
   """v_z^2 (base frame): penalize bouncing."""
+  # Up/down speed of the trunk, squared. Weight -2: a trunk bobbing at 0.1 m/s costs 0.02/s;
+  # tumbling (rung 5: -0.54/s) costs a lot.
   asset: Entity = env.scene[asset_cfg.name]
-  return torch.square(asset.data.root_link_lin_vel_b[:, 2])
+  return torch.square(asset.data.root_link_lin_vel_b[:, 2])  # [B]
 
 
 def ang_vel_xy_l2(
   env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG
 ) -> torch.Tensor:
   """|w_xy|^2 (base frame): penalize roll and pitch rates."""
+  # How fast the trunk rocks sideways (roll) and forwards (pitch), squared. Not the tilt
+  # itself: a robot that leans still costs nothing here (that would be `orientation`).
   asset: Entity = env.scene[asset_cfg.name]
-  return torch.sum(torch.square(asset.data.root_link_ang_vel_b[:, :2]), dim=1)
+  return torch.sum(torch.square(asset.data.root_link_ang_vel_b[:, :2]), dim=1)  # [B]
 
 
 def joint_power(
   env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG
 ) -> torch.Tensor:
   """sum |tau| * |q_dot| (mechanical power). Actuators are in joint order on the Go2."""
+  # Old teacher only (weight -2e-5). Motor torque x joint speed = watts spent.
   asset: Entity = env.scene[asset_cfg.name]
   return torch.sum(
     torch.abs(asset.data.actuator_force) * torch.abs(asset.data.joint_vel), dim=1
@@ -452,25 +478,30 @@ def joint_power(
 
 class weighted_default_pose:
   """sum_i w_i * (q_i - q_default_i)^2, with per-joint weights given by name regex."""
+  # A class (not a function) so the regex -> per-joint weight lookup happens once, at
+  # build time, instead of every step. The Go2 configs give hips weight 1, thighs and
+  # calves 0: only sideways leg splay is penalized (PGTT).
 
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    # Called once when the reward manager builds its terms.
     asset: Entity = env.scene[cfg.params["asset_cfg"].name]
-    _, joint_names = asset.find_joints(cfg.params["asset_cfg"].joint_names)
+    _, joint_names = asset.find_joints(cfg.params["asset_cfg"].joint_names)  # all 12 joints
+    # {r".*_hip_joint": 1.0, ...} -> one weight per joint, in joint order.
     _, _, weights = resolve_matching_names_values(
       data=cfg.params["weights"], list_of_strings=joint_names
     )
-    self.weights = torch.tensor(weights, device=env.device, dtype=torch.float32)
+    self.weights = torch.tensor(weights, device=env.device, dtype=torch.float32)  # [12]
 
   def __call__(
     self, env: ManagerBasedRlEnv, weights, asset_cfg: SceneEntityCfg
   ) -> torch.Tensor:
     del weights  # Resolved in __init__.
     asset: Entity = env.scene[asset_cfg.name]
-    error = (
+    error = (  # each joint's angle minus its standing angle (rad), [B, 12]
       asset.data.joint_pos[:, asset_cfg.joint_ids]
       - asset.data.default_joint_pos[:, asset_cfg.joint_ids]
     )
-    return torch.sum(self.weights * torch.square(error), dim=1)
+    return torch.sum(self.weights * torch.square(error), dim=1)  # [B]
 
 
 def swing_foot_contact(
@@ -480,16 +511,20 @@ def swing_foot_contact(
 
   The contact sensor's feet must be listed in the same order as the gait command legs.
   """
+  # PGTT's "contact" term (weight -0.25): enforces the gait's TIMING. foot_phase only
+  # scores heights loosely; this charges every foot that stays down when it should lift.
   sensor: ContactSensor = env.scene[sensor_name]
   assert sensor.data.found is not None
-  gait = env.command_manager.get_term(command_name)
-  in_contact = sensor.data.found > 0
-  return torch.sum((in_contact & gait.swing_mask).float(), dim=1)
+  gait = env.command_manager.get_term(command_name)  # the phase clock (gait_command.py)
+  in_contact = sensor.data.found > 0  # [B, 4] True = touching the ground
+  # swing_mask: [B, 4] True where the leg's phase is in [pi, 2 pi) (its swing half).
+  return torch.sum((in_contact & gait.swing_mask).float(), dim=1)  # [B], 0-4
 
 
 def _smoothstep(s: torch.Tensor) -> torch.Tensor:
   """Cubic Hermite with zero end slopes: 0 -> 1 on s in [0, 1]."""
-  s = torch.clamp(s, 0.0, 1.0)
+  # 3s^2 - 2s^3: starts and ends flat, so the foot target lifts off and lands gently.
+  s = torch.clamp(s, 0.0, 1.0)  # outside [0, 1] it holds at 0 or 1
   return s * s * (3.0 - 2.0 * s)
 
 
@@ -508,14 +543,19 @@ def desired_foot_height(
   dH is the terrain height variation around the foot, so the swing apex rises on
   uneven ground (stairs) and stays low on flat ground.
   """
-  apex = swing_height + terrain_delta
+  # All tensors [B, L]. Heights are in whatever frame the caller uses: above the ground
+  # (foot_phase_tracking) or relative to the IMU (foot_phase_tracking_body, negative).
+  apex = swing_height + terrain_delta  # highest point of this swing
+  # Lift: s goes 0 -> 1 as the phase goes pi -> 1.5 pi.
   up = stance_height + (apex - stance_height) * _smoothstep(
     (phase - math.pi) / (0.5 * math.pi)
   )
+  # Lower: s goes 0 -> 1 as the phase goes 1.5 pi -> 2 pi.
   down = apex + (stance_height - apex) * _smoothstep(
     (phase - 1.5 * math.pi) / (0.5 * math.pi)
   )
-  target = torch.where(phase < 1.5 * math.pi, up, down)
+  target = torch.where(phase < 1.5 * math.pi, up, down)  # first or second half of the swing
+  # First half of the cycle (phase < pi): stance, the foot stays at stance_height.
   return torch.where(phase < math.pi, torch.full_like(phase, stance_height), target)
 
 
@@ -534,20 +574,26 @@ def _foot_terrain(
     z_max     highest terrain within `radius` of the foot (ground_z if no ray is near)
     z_min     lowest terrain within `radius` of the foot (ground_z if no ray is near)
   """
+  # The 99 rays hit the ground on a 10 cm grid around the trunk. For each foot, this
+  # looks at the rays' hit points near it.
   foot_pos = env.scene[asset_name].data.site_pos_w[:, site_ids]  # [B, L, 3]
   scan = env.scene[sensor_name].data
-  hit_z = scan.hit_pos_w[..., 2]  # [B, N]
-  valid = (scan.distances >= 0).unsqueeze(1)  # [B, 1, N]
+  hit_z = scan.hit_pos_w[..., 2]  # [B, N]  height of each ray's hit point
+  valid = (scan.distances >= 0).unsqueeze(1)  # [B, 1, N]  -1 = the ray hit nothing
+  # Horizontal distance from every foot to every hit point.
   dist = torch.norm(
     scan.hit_pos_w[:, None, :, :2] - foot_pos[:, :, None, :2], dim=-1
   )  # [B, L, N]
 
+  # The ground directly under the foot = the nearest valid hit point.
   nearest = torch.argmin(torch.where(valid, dist, torch.inf), dim=-1)  # [B, L]
   ground_z = torch.gather(hit_z, 1, nearest)  # [B, L]
 
+  # Hit points within `radius` of the foot: their highest and lowest heights. On flat
+  # ground z_max = z_min; next to a 10 cm step, z_max - z_min = 0.10.
   near = valid & (dist < radius)
-  any_near = near.any(dim=-1)
-  hit_z_l = hit_z.unsqueeze(1).expand_as(dist)
+  any_near = near.any(dim=-1)  # [B, L] at least one ray within the radius
+  hit_z_l = hit_z.unsqueeze(1).expand_as(dist)  # the heights, repeated per leg
   z_max = torch.where(any_near, torch.where(near, hit_z_l, -torch.inf).amax(dim=-1), ground_z)
   z_min = torch.where(any_near, torch.where(near, hit_z_l, torch.inf).amin(dim=-1), ground_z)
   return foot_pos[..., 2], ground_z, z_max, z_min
@@ -559,6 +605,8 @@ class _GaitFeetTerm:
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
     asset: Entity = env.scene[cfg.params["asset_cfg"].name]
     gait_cfg = env.command_manager.get_term_cfg(cfg.params["command_name"])
+    # Foot sites named like the gait's legs ("FL", "FR", "RL", "RR"), in that order, so
+    # foot i here is leg i of the phase clock.
     self.site_ids, _ = asset.find_sites(gait_cfg.leg_names, preserve_order=True)
 
 
@@ -585,19 +633,23 @@ class foot_phase_tracking(_GaitFeetTerm):
     max_terrain_delta: float,
     asset_cfg: SceneEntityCfg,
   ) -> torch.Tensor:
+    # Old teacher task's version (heights above the ground). The ladder uses
+    # foot_phase_tracking_body below.
     gait = env.command_manager.get_term(command_name)
     foot_z, ground_z, z_max, z_min = _foot_terrain(
       env, self.site_ids, sensor_name, terrain_radius, asset_cfg.name
     )
-    delta = torch.clamp(z_max - z_min, 0.0, max_terrain_delta)
+    delta = torch.clamp(z_max - z_min, 0.0, max_terrain_delta)  # dH, capped (e.g. 0.15 m)
 
-    foot_height = foot_z - ground_z
+    foot_height = foot_z - ground_z  # [B, L] foot above the ground under it
     target = desired_foot_height(gait.phase, delta, stance_height, swing_height)
-    error = torch.square(target - foot_height)
+    error = torch.square(target - foot_height)  # [B, L] in m^2
 
-    log = env.extras["log"]
+    log = env.extras["log"]  # extra TensorBoard metrics (not part of the reward)
     log["Metrics/foot_height_error"] = torch.mean(torch.sqrt(error))
     log["Metrics/terrain_delta_mean"] = torch.mean(delta)
+    # One exponential of the error SUMMED over the 4 feet (max 1). The earlier per-foot
+    # sum of exponentials paid planted feet most of a 4x larger reward (run v1's hack).
     return torch.exp(-torch.sum(error, dim=1) / sigma)
 
 
@@ -612,9 +664,9 @@ class foot_phase_tracking_body(_GaitFeetTerm):
   """
 
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
-    super().__init__(cfg, env)
+    super().__init__(cfg, env)  # finds the 4 foot sites (self.site_ids)
     asset: Entity = env.scene[cfg.params["asset_cfg"].name]
-    ref_ids, _ = asset.find_sites(cfg.params["ref_site"])
+    ref_ids, _ = asset.find_sites(cfg.params["ref_site"])  # the "imu" site on the trunk
     self.ref_id = ref_ids[0]
 
   def __call__(
@@ -630,23 +682,32 @@ class foot_phase_tracking_body(_GaitFeetTerm):
     max_terrain_delta: float,
     asset_cfg: SceneEntityCfg,
   ) -> torch.Tensor:
+    # The ladder's foot_phase (weight +1, sigma 0.05, stance -0.30, swing -0.20).
     del ref_site  # Resolved in __init__.
     asset: Entity = env.scene[asset_cfg.name]
     gait = env.command_manager.get_term(command_name)
-    sites = asset.data.site_pos_w
-    rel_w = sites[:, self.site_ids] - sites[:, self.ref_id].unsqueeze(1)
+    sites = asset.data.site_pos_w  # world positions of all sites
+    rel_w = sites[:, self.site_ids] - sites[:, self.ref_id].unsqueeze(1)  # foot - IMU, [B, L, 3]
+    # Rotate that vector into the trunk's frame, so "z" is along the trunk's up axis.
     quat = asset.data.root_link_quat_w.unsqueeze(1).expand(-1, rel_w.shape[1], -1)
-    foot_height = quat_apply_inverse(quat, rel_w)[..., 2]
+    foot_height = quat_apply_inverse(quat, rel_w)[..., 2]  # [B, L], about -0.30 standing
 
+    # Terrain unevenness near each foot, used only to raise the swing apex. Because the
+    # rest is body-relative, a slight trunk tilt shifts the rear feet against the front
+    # ones by only ~1.7 cm per 5 degrees: cheap under sigma 0.05 (a backward lean barely
+    # costs anything here).
     _, _, z_max, z_min = _foot_terrain(
       env, self.site_ids, sensor_name, terrain_radius, asset_cfg.name
     )
     delta = torch.clamp(z_max - z_min, 0.0, max_terrain_delta)
     target = desired_foot_height(gait.phase, delta, stance_height, swing_height)
-    error = torch.square(target - foot_height)
+    error = torch.square(target - foot_height)  # [B, L]
 
     log = env.extras["log"]
     log["Metrics/foot_height_error"] = torch.mean(torch.sqrt(error))
+    # Max 1 when all four feet are where the clock wants them. Note: it is paid even if
+    # the robot doesn't move (stepping in place earns it fully), which is why the
+    # tracking terms and swing_contact are needed next to it.
     return torch.exp(-torch.sum(error, dim=1) / sigma)
 
 
@@ -654,7 +715,9 @@ def torques_pgtt(
   env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG
 ) -> torch.Tensor:
   """PGTT torque cost: |tau|_2 + |tau|_1."""
-  tau = env.scene[asset_cfg.name].data.actuator_force
+  # Motor effort (weight -2e-6, tiny): the length of the 12-torque vector plus the sum
+  # of their sizes, in Nm.
+  tau = env.scene[asset_cfg.name].data.actuator_force  # [B, 12] Nm
   return torch.norm(tau, dim=1) + torch.sum(torch.abs(tau), dim=1)
 
 
@@ -685,8 +748,8 @@ class swing_terrain_clearance(_GaitFeetTerm):
   ) -> torch.Tensor:
     gait = env.command_manager.get_term(command_name)
     foot_z, _, z_max, _ = _foot_terrain(env, self.site_ids, sensor_name, radius, asset_cfg.name)
-    too_low = foot_z < z_max + margin
-    return torch.sum((too_low & gait.swing_mask).float(), dim=1)
+    too_low = foot_z < z_max + margin  # [B, L] below the highest nearby terrain + margin
+    return torch.sum((too_low & gait.swing_mask).float(), dim=1)  # only swinging feet count
 
 
 class stance_on_edge(_GaitFeetTerm):
@@ -702,6 +765,7 @@ class stance_on_edge(_GaitFeetTerm):
   ) -> torch.Tensor:
     gait = env.command_manager.get_term(command_name)
     _, _, z_max, z_min = _foot_terrain(env, self.site_ids, sensor_name, radius, asset_cfg.name)
+    # Unevenness around each stance foot (0 on flat ground, the step height on an edge).
     return torch.sum((z_max - z_min) * (~gait.swing_mask).float(), dim=1)
 
 
@@ -710,12 +774,15 @@ def base_height_above_terrain(
 ) -> torch.Tensor:
   """Base height above the ground under it: base z minus the median height-scan hit
   within `radius` (horizontal) of the base, so a step ahead does not count."""
-  scan = env.scene[sensor_name].data
+  scan = env.scene[sensor_name].data  # the height scanner, attached to the trunk
+  # Horizontal distance of every ray's hit point from the trunk, [B, N].
   offset = torch.norm(scan.hit_pos_w[..., :2] - scan.pos_w[:, None, :2], dim=-1)
+  # Heights of the hits within `radius` (20 cm) of the trunk; all others become NaN.
   ground_z = torch.where(
     (scan.distances >= 0) & (offset < radius), scan.hit_pos_w[..., 2], torch.nan
   )
-  return scan.pos_w[:, 2] - torch.nanmedian(ground_z, dim=-1).values
+  # Trunk height minus the median of those (the median ignores a few rays on a step).
+  return scan.pos_w[:, 2] - torch.nanmedian(ground_z, dim=-1).values  # [B] metres
 
 
 def base_height_below(
@@ -726,7 +793,10 @@ def base_height_below(
   One-sided, so it stops crouching / lying low without paying the robot to stand
   taller. 0 if no ray hit the ground near the base.
   """
-  h = base_height_above_terrain(env, sensor_name, radius)
+  # Rung 5+ (weight -50, target 0.25 m): 0 at the walking height (~0.28 m);
+  # -50 x (0.25 - 0.20)^2 = -0.125/s at 0.20 m, -0.8/s at 0.12 m.
+  h = base_height_above_terrain(env, sensor_name, radius)  # [B]
+  # clamp(min=0): only being too LOW counts. nan_to_num: no ray near the base -> 0.
   return torch.nan_to_num(torch.square(torch.clamp(target - h, min=0.0)), nan=0.0)
 
 
@@ -736,9 +806,11 @@ def leg_ground_contact_count(env: ManagerBasedRlEnv, sensor_name: str) -> torch.
   Uses a leg-vs-terrain sensor (the cpu branch used a thigh-vs-shank self-contact
   sensor, which never sees the ground).
   """
-  sensor: ContactSensor = env.scene[sensor_name]
+  # Rung 5+ (weight -0.25): each thigh or calf shape on the ground costs 0.25/s, so
+  # kneeling on both hind calves (2-4 shapes) costs ~0.5-1/s. Up to 12 shapes.
+  sensor: ContactSensor = env.scene[sensor_name]  # leg_ground_contact (env_cfgs.py)
   assert sensor.data.found is not None
-  return torch.sum((sensor.data.found > 0).float(), dim=1)
+  return torch.sum((sensor.data.found > 0).float(), dim=1)  # [B], 0-12
 
 
 def lin_vel_orthogonal_l2(
@@ -754,10 +826,11 @@ def lin_vel_orthogonal_l2(
   asset: Entity = env.scene[asset_cfg.name]
   command = env.command_manager.get_command(command_name)
   assert command is not None, f"Command '{command_name}' not found."
-  v = asset.data.root_link_lin_vel_b[:, :2]
-  c = command[:, :2]
+  v = asset.data.root_link_lin_vel_b[:, :2]  # actual xy velocity, [B, 2]
+  c = command[:, :2]  # commanded xy velocity, [B, 2]
   c_norm = torch.norm(c, dim=1, keepdim=True)
-  direction = c / torch.clamp(c_norm, min=1e-6)
+  direction = c / torch.clamp(c_norm, min=1e-6)  # unit vector of the command
+  # v minus its part along the command = the sideways drift.
   v_orth = v - torch.sum(v * direction, dim=1, keepdim=True) * direction
   active = (c_norm.squeeze(1) > command_threshold).float()
   return torch.sum(torch.square(v_orth), dim=1) * active

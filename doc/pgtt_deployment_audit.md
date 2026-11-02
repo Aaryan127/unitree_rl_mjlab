@@ -120,12 +120,19 @@ link and measure end-to-end latency before relying on terrain perception.
 
 ## Reproducible path to a deployment candidate
 
-Train on a GPU-capable host; the task defaults now use mixed terrain:
+Train on a GPU-capable host. The teacher is the top rung of the ladder (rung 7: mixed terrain,
+full randomization), not the old `Mjlab-Velocity-PGTT-Teacher-Unitree-Go2` task, which never
+walked ([reward_hacking_runs_1-3.md](reward_hacking_runs_1-3.md)). As of 2 Nov 2026 the
+rung 4+ collapse is being fixed. The teacher command below uses the candidate fix
+(`termination` −100) and may change with the diagnosis result. Full steps: [COMMANDS.md](../COMMANDS.md) 4d.
 
 ```bash
-python scripts/train.py Mjlab-Velocity-PGTT-Teacher-Unitree-Go2 --terrain mixed --env.scene.num-envs 4096
-python scripts/train.py Mjlab-Velocity-PGTT-Student-Unitree-Go2 --terrain mixed --env.scene.num-envs 4096 --teacher-checkpoint <trained-teacher.pt>
+python scripts/train.py Mjlab-Velocity-PGTT-Rung7-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=10000 --agent.run-name teacher_full --env.rewards.termination.weight=-100
+python scripts/train.py Mjlab-Velocity-PGTT-Student-Unitree-Go2 --terrain mixed --env.scene.num-envs 4096 --teacher-checkpoint logs/rsl_rl/go2_pgtt_repro/<date>_<time>_teacher_full/model_9999.pt
 ```
+The student task is built on the old teacher task's environment. Before the real student run,
+check with a short smoke run that it loads the rung-7 teacher (same network and observation
+sizes).
 
 Evaluate the resulting student separately on each surface. Repeat difficulty values
 0, 0.5 and 1, and inspect the motion as well as the JSON metrics. The evaluator reports

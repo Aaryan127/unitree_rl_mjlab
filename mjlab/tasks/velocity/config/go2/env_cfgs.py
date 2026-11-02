@@ -1,56 +1,81 @@
 """Unitree Go2 velocity environment configurations."""
 
-from dataclasses import replace
+# How to read this file
+# ---------------------
+# Every function here returns a ManagerBasedRlEnvCfg: a big nested dataclass that says
+# what the simulated world is (robot, terrain, sensors) and what the task is
+# (observations, actions, commands, randomization "events", rewards, terminations,
+# curriculum). Nothing is simulated here; train.py builds the environment from it.
+# Each function starts from a more general config and overwrites parts of it, so read
+# them as "the same as X, except ...". Most functions take `play`: True gives the
+# version used for watching or checking a policy (no noise, no pushes, no curriculum).
+#
+#   unitree_go2_rough_env_cfg / _flat_env_cfg     stock mjlab Go2 tasks (not PGTT)
+#   unitree_go2_pgtt_env_cfg                       the PGTT teacher/student task (4.1 in CODE_GUIDE)
+#   unitree_go2_pgtt_repro_env_cfg                 rung 0: the official PGTT setup, walks
+#   unitree_go2_pgtt_repro_smooth_env_cfg          rung 0b: + a tremor penalty
+#   unitree_go2_pgtt_rung_env_cfg(rung)            rungs 1-7: + one teacher change each
 
-import mujoco
+from dataclasses import replace  # copy of a dataclass with some fields changed
+
+import mujoco  # the physics engine's Python API (used to edit the robot model, MjSpec)
 
 from mjlab.asset_zoo.robots import (
-  get_go2_robot_cfg,
+  get_go2_robot_cfg,  # a fresh Go2 description: full collisions, stock motors
 )
-from mjlab.actuator.delayed_actuator import DelayedActuatorCfg
-from mjlab.asset_zoo.robots.unitree_go2 import go2_constants
-from mjlab.envs import ManagerBasedRlEnvCfg
-from mjlab.envs.mdp.actions import JointPositionActionCfg
-from mjlab.managers.event_manager import EventTermCfg
-from mjlab.managers.reward_manager import RewardTermCfg
-from mjlab.managers.scene_entity_config import SceneEntityCfg
-from mjlab.managers.termination_manager import TerminationTermCfg
+from mjlab.actuator.delayed_actuator import DelayedActuatorCfg  # motor whose target arrives late
+from mjlab.asset_zoo.robots.unitree_go2 import go2_constants  # Go2 motor/collision presets
+from mjlab.envs import ManagerBasedRlEnvCfg  # the config type every function returns
+from mjlab.envs.mdp.actions import JointPositionActionCfg  # actions = joint position targets
+from mjlab.managers.event_manager import EventTermCfg  # randomization/reset "events"
+from mjlab.managers.reward_manager import RewardTermCfg  # one reward term: function + weight
+from mjlab.managers.scene_entity_config import SceneEntityCfg  # robot/bodies/joints a term uses
+from mjlab.managers.termination_manager import TerminationTermCfg  # when an episode ends
 from mjlab.sensor import (
-  ContactMatch,
-  ContactSensorCfg,
-  GridPatternCfg,
-  LidarPatternCfg,
-  ObjRef,
-  RayCastSensorCfg,
+  ContactMatch,  # which geoms/bodies a contact sensor watches
+  ContactSensorCfg,  # "is A touching B, and how hard"
+  GridPatternCfg,  # ray pattern: a flat grid of downward rays (height map)
+  LidarPatternCfg,  # ray pattern: a spinning LiDAR's beams
+  ObjRef,  # names the body a sensor is attached to
+  RayCastSensorCfg,  # sensor that shoots rays and reports where they hit
 )
-from mjlab.tasks.velocity import mdp
-from mjlab.tasks.velocity.terrain_profiles import set_terrain_profile
+from mjlab.tasks.velocity import mdp  # all reward/observation/event/termination functions
+from mjlab.tasks.velocity.terrain_profiles import set_terrain_profile  # "flat", "stairs", ...
 from mjlab.tasks.velocity.velocity_env_cfg import (
-  make_pgtt_env_cfg,
-  make_velocity_env_cfg,
+  make_pgtt_env_cfg,  # robot-independent PGTT task recipe (velocity_env_cfg.py)
+  make_velocity_env_cfg,  # robot-independent stock velocity task
 )
-from mjlab.utils.noise import UniformNoiseCfg as Unoise
+from mjlab.utils.noise import UniformNoiseCfg as Unoise  # noise drawn uniformly in [n_min, n_max]
+
+
+##
+# Stock mjlab Go2 tasks (Mjlab-Velocity-Rough/Flat-Unitree-Go2). Not used by PGTT.
+##
 
 
 def unitree_go2_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """Create Unitree Go2 rough terrain velocity configuration."""
-  cfg = make_velocity_env_cfg()
+  cfg = make_velocity_env_cfg()  # the generic velocity task, no robot yet
 
-  cfg.scene.entities = {"robot": get_go2_robot_cfg()}
+  cfg.scene.entities = {"robot": get_go2_robot_cfg()}  # put one Go2 (per environment) in it
 
+  # Leg order used to build names below. Geom = a collision shape in the model.
   foot_names = ("FR", "FL", "RR", "RL")
-  site_names = ("FR", "FL", "RR", "RL")
-  geom_names = tuple(f"{name}_foot_collision" for name in foot_names)
+  site_names = ("FR", "FL", "RR", "RL")  # "sites" = marked points at the feet
+  geom_names = tuple(f"{name}_foot_collision" for name in foot_names)  # the 4 foot spheres
 
+  # Contact sensor: which feet touch the terrain, with how much force, and for how long
+  # each foot has been in the air (used by air-time rewards).
   feet_ground_cfg = ContactSensorCfg(
     name="feet_ground_contact",
-    primary=ContactMatch(mode="geom", pattern=geom_names, entity="robot"),
-    secondary=ContactMatch(mode="body", pattern="terrain"),
-    fields=("found", "force"),
-    reduce="netforce",
+    primary=ContactMatch(mode="geom", pattern=geom_names, entity="robot"),  # the feet...
+    secondary=ContactMatch(mode="body", pattern="terrain"),  # ...against the ground
+    fields=("found", "force"),  # report "touching?" and the contact force
+    reduce="netforce",  # several contact points per foot -> summed into one force
     num_slots=1,
     track_air_time=True,
   )
+  # Contact sensor for everything that is NOT a foot (trunk, hips, legs).
   nonfoot_ground_cfg = ContactSensorCfg(
     name="nonfoot_ground_touch",
     primary=ContactMatch(
@@ -62,24 +87,29 @@ def unitree_go2_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       exclude=tuple(geom_names),
     ),
     secondary=ContactMatch(mode="body", pattern="terrain"),
-    fields=("found",),
-    reduce="none",
+    fields=("found",),  # only "touching or not"
+    reduce="none",  # one answer per geom
     num_slots=1,
   )
   cfg.scene.sensors = (feet_ground_cfg, nonfoot_ground_cfg)
 
+  # Terrain curriculum: robots that walk well get moved to harder terrain rows.
   if cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:
     cfg.scene.terrain.terrain_generator.curriculum = True
 
   joint_pos_action = cfg.actions["joint_pos"]
-  assert isinstance(joint_pos_action, JointPositionActionCfg)
+  assert isinstance(joint_pos_action, JointPositionActionCfg)  # sanity check of the action type
 
+  # Where the viewer camera looks: at the trunk, 1.5 m away, 10 degrees from above.
   cfg.viewer.body_name = "base_link"
   cfg.viewer.distance = 1.5
   cfg.viewer.elevation = -10.0
 
-  cfg.events["base_com"].params["asset_cfg"].body_names = ("base_link",)
+  # The generic task leaves robot-specific names empty; fill in the Go2's.
+  cfg.events["base_com"].params["asset_cfg"].body_names = ("base_link",)  # shift the trunk's CoM
 
+  # Posture reward: how far each joint may stray from the standing pose (std in rad),
+  # tighter when standing, looser when walking/running. Hips tightest (no splaying).
   cfg.rewards["pose"].params["std_standing"] = {
     r".*(FR|FL|RR|RL)_hip_joint.*": 0.05,
     r".*(FR|FL|RR|RL)_thigh_joint.*": 0.1,
@@ -95,10 +125,11 @@ def unitree_go2_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     r".*(FR|FL|RR|RL)_thigh_joint.*": 0.35,
     r".*(FR|FL|RR|RL)_calf_joint.*": 0.5,
   }
-  cfg.rewards["body_ang_vel"].params["asset_cfg"].body_names = ("base_link",)
-  cfg.rewards["foot_clearance"].params["asset_cfg"].site_names = site_names
-  cfg.rewards["foot_slip"].params["asset_cfg"].site_names = site_names
+  cfg.rewards["body_ang_vel"].params["asset_cfg"].body_names = ("base_link",)  # trunk wobble
+  cfg.rewards["foot_clearance"].params["asset_cfg"].site_names = site_names  # foot lift
+  cfg.rewards["foot_slip"].params["asset_cfg"].site_names = site_names  # feet sliding
 
+  # Any non-foot part touching the ground ends the episode.
   cfg.terminations["illegal_contact"] = TerminationTermCfg(
     func=mdp.illegal_contact,
     params={"sensor_name": nonfoot_ground_cfg.name},
@@ -109,9 +140,10 @@ def unitree_go2_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     # Effectively infinite episode length.
     cfg.episode_length_s = int(1e9)
 
-    cfg.observations["policy"].enable_corruption = False
-    cfg.events.pop("push_robot", None)
+    cfg.observations["policy"].enable_corruption = False  # no sensor noise
+    cfg.events.pop("push_robot", None)  # no shoves
 
+    # A small terrain (5 x 5 tiles) of mixed difficulty, no curriculum.
     if cfg.scene.terrain is not None:
       if cfg.scene.terrain.terrain_generator is not None:
         cfg.scene.terrain.terrain_generator.curriculum = False
@@ -124,15 +156,15 @@ def unitree_go2_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
 def unitree_go2_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """Create Unitree Go2 flat terrain velocity configuration."""
-  cfg = unitree_go2_rough_env_cfg(play=play)
+  cfg = unitree_go2_rough_env_cfg(play=play)  # the rough task above, then:
 
   # Switch to flat terrain.
   assert cfg.scene.terrain is not None
-  cfg.scene.terrain.terrain_type = "plane"
-  cfg.scene.terrain.terrain_generator = None
+  cfg.scene.terrain.terrain_type = "plane"  # an infinite flat plane
+  cfg.scene.terrain.terrain_generator = None  # no generated tiles
 
   # Disable terrain curriculum.
-  del cfg.curriculum["terrain_levels"]
+  del cfg.curriculum["terrain_levels"]  # nothing harder to move to on a plane
 
   return cfg
 
@@ -150,42 +182,48 @@ def _go2_spec_with_named_calves() -> mujoco.MjSpec:
   Contact sensors select geoms by name, so this is needed to detect the shank touching
   the ground (privileged leg_ground_contact). Only used by the PGTT task.
   """
-  spec = go2_constants.get_spec()
+  spec = go2_constants.get_spec()  # the Go2 model as an editable MjSpec (before compiling)
   for leg in _LEGS:
+    # The calf's collision cylinders that have no name yet (the XML leaves them unnamed).
     cylinders = [
       g
       for g in spec.body(f"{leg}_calf").geoms
       if not g.name and g.type == mujoco.mjtGeom.mjGEOM_CYLINDER
     ]
+    # Exactly two per calf (strict=True fails loudly otherwise): name them upper/lower.
     for geom, part in zip(cylinders, ("upper", "lower"), strict=True):
-      geom.name = f"{leg}_calf_{part}_collision"
+      geom.name = f"{leg}_calf_{part}_collision"  # e.g. "FL_calf_upper_collision"
   return spec
 
 
 def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """Unitree Go2 PGTT stairs task, shared by the teacher (PPO) and student (distillation)."""
+  # The robot-independent PGTT recipe: observation groups, gait command, randomization,
+  # the (old) teacher reward set, terminations, curriculum, mixed terrain.
   cfg = make_pgtt_env_cfg()
 
   # Go2 with named calf geoms and DELAYED actuators: the position target can reach the
   # motor 0-20 ms late (sampled per episode by the actuator_delay event), as on the real
   # robot where commands travel over DDS. Gains from the official PGTT training config
   # (Kp 40, Kd 0.5; the stock Go2 task uses 20 / 1); the export writes them to deploy.yaml.
-  go2 = get_go2_robot_cfg()
+  go2 = get_go2_robot_cfg()  # full-body collisions (every *_collision geom can touch)
   delayed = DelayedActuatorCfg(
+    # The Go2 motor model (23.5 Nm torque limit, rotor armature 0.01) with PGTT's gains.
     base_cfg=replace(go2_constants.GO2_ACTUATOR_GO2HV, stiffness=40.0, damping=0.5),
-    delay_target="position",
-    delay_max_lag=4,
+    delay_target="position",  # what arrives late: the position target
+    delay_max_lag=4,  # up to 4 physics steps of 5 ms = 20 ms
   )
   cfg.scene.entities = {
     "robot": replace(
       go2,
-      spec_fn=_go2_spec_with_named_calves,
-      articulation=replace(go2.articulation, actuators=(delayed,)),
+      spec_fn=_go2_spec_with_named_calves,  # build the model with named calf cylinders
+      articulation=replace(go2.articulation, actuators=(delayed,)),  # the delayed motors
     )
   }
 
-  foot_geoms = tuple(f"{leg}_foot_collision" for leg in _LEGS)
-  leg_geoms = tuple(
+  # Names of the geoms the sensors below watch.
+  foot_geoms = tuple(f"{leg}_foot_collision" for leg in _LEGS)  # 4 foot spheres
+  leg_geoms = tuple(  # 12 leg shapes: thigh + 2 calf cylinders per leg
     f"{leg}_{part}_collision" for leg in _LEGS for part in ("thigh", "calf_upper", "calf_lower")
   )
 
@@ -193,12 +231,13 @@ def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # Sensors
   ##
 
+  # Feet vs terrain: touching? total force? normal? air time? (foot rewards, privileged obs)
   feet_ground_cfg = ContactSensorCfg(
     name="feet_ground_contact",
     primary=ContactMatch(mode="geom", pattern=foot_geoms, entity="robot"),
     secondary=ContactMatch(mode="body", pattern="terrain"),
     fields=("found", "force", "normal"),
-    reduce="netforce",
+    reduce="netforce",  # one summed force per foot
     num_slots=1,
     track_air_time=True,
   )
@@ -212,6 +251,8 @@ def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     reduce="maxforce",
     num_slots=1,
   )
+  # Thighs/calves vs terrain, one yes/no per geom (12 values). Read by the leg_contact
+  # reward (kneeling, a shin on a step edge) and the teacher's privileged observation.
   leg_ground_cfg = ContactSensorCfg(
     name="leg_ground_contact",
     primary=ContactMatch(mode="geom", pattern=leg_geoms, entity="robot"),
@@ -242,12 +283,12 @@ def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # (terrain) is hit; the robot's own geoms are groups 2 and 3.
   height_scanner_cfg = RayCastSensorCfg(
     name="height_scanner",
-    frame=ObjRef(type="body", name="base_link", entity="robot"),
-    pattern=GridPatternCfg(size=(1.0, 0.8), resolution=0.1, z_offset=0.5),
-    ray_alignment="yaw",
-    max_distance=3.0,
+    frame=ObjRef(type="body", name="base_link", entity="robot"),  # moves with the trunk
+    pattern=GridPatternCfg(size=(1.0, 0.8), resolution=0.1, z_offset=0.5),  # 10 cm spacing
+    ray_alignment="yaw",  # the grid turns with the robot's heading, not its roll/pitch
+    max_distance=3.0,  # rays longer than 3 m count as "no hit"
     include_geom_groups=(0,),
-    debug_vis=play,
+    debug_vis=play,  # draw the rays in the viewer when watching
   )
   # Simulated head LiDAR for the student's height map (see mdp.lidar_height_map).
   # Beams start at the mount point and tilt with the body (ray_alignment="base"), so the
@@ -258,15 +299,15 @@ def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     name="lidar",
     frame=ObjRef(type="body", name="base_link", entity="robot"),
     pattern=LidarPatternCfg(
-      mount_pos=(0.28, 0.0, 0.03),
-      azimuth_res_deg=4.0,
-      elevation_range_deg=(-80.0, -10.0),
-      num_rings=16,
-      pitch_deg=0.0,
+      mount_pos=(0.28, 0.0, 0.03),  # 28 cm forward, 3 cm up from the trunk centre
+      azimuth_res_deg=4.0,  # one beam every 4 degrees around
+      elevation_range_deg=(-80.0, -10.0),  # beams aimed 10-80 degrees below horizontal
+      num_rings=16,  # 16 beams spread over that elevation range
+      pitch_deg=0.0,  # mount tilt
     ),
-    ray_alignment="base",
+    ray_alignment="base",  # tilts with the trunk, like a real head-mounted LiDAR
     max_distance=5.0,
-    include_geom_groups=(0,),
+    include_geom_groups=(0,),  # sees only the terrain
   )
   cfg.scene.sensors = (
     feet_ground_cfg,
@@ -276,11 +317,13 @@ def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     height_scanner_cfg,
     lidar_cfg,
   )
+  # Episode ends (counts as a fall) when the trunk or a hip touches the ground.
   cfg.terminations["body_contact"] = TerminationTermCfg(
-    func=mdp.illegal_contact,
+    func=mdp.illegal_contact,  # True if any watched geom is touching
     params={"sensor_name": body_ground_cfg.name},
   )
 
+  # Terrain curriculum on (robots that walk far enough move to harder rows).
   if cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:
     cfg.scene.terrain.terrain_generator.curriculum = True
 
@@ -288,16 +331,21 @@ def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # Robot-specific names
   ##
 
+  # Viewer camera: follows the trunk.
   cfg.viewer.body_name = "base_link"
   cfg.viewer.distance = 1.5
   cfg.viewer.elevation = -10.0
 
-  cfg.commands["gait"].leg_names = _LEGS  # type: ignore[attr-defined]
+  cfg.commands["gait"].leg_names = _LEGS  # type: ignore[attr-defined]  # phase clock leg order
 
+  # Randomization events that need body names: trunk mass, trunk centre of mass, the
+  # external push force (all on the trunk), and the leg links' masses.
   for event in ("base_mass", "base_com", "external_wrench"):
     cfg.events[event].params["asset_cfg"].body_names = ("base_link",)
   cfg.events["link_mass"].params["asset_cfg"].body_names = (r".*_(hip|thigh|calf)",)
 
+  # Privileged (simulator-only) observations that need names: the feet's friction and
+  # the external force on the trunk. Only the teacher and critic see these.
   privileged = cfg.observations["privileged"].terms
   privileged["foot_friction"].params["asset_cfg"].geom_names = foot_geoms
   privileged["base_external_wrench"].params["asset_cfg"].body_names = ("base_link",)
@@ -312,7 +360,7 @@ def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # Foot site is the center of the 2.2 cm foot sphere, so it sits 2.2 cm above the
   # ground when standing.
   cfg.rewards["foot_phase"].params["stance_height"] = 0.022
-  cfg.rewards["foot_slip"].params["asset_cfg"].site_names = _LEGS
+  cfg.rewards["foot_slip"].params["asset_cfg"].site_names = _LEGS  # (optional term, weight 0)
   # Height grid layout (rows = y points, cols = x points) for the student's map-shift noise.
   cfg.observations["height_noisy"].terms["height_scan"].noise.grid_shape = (9, 11)  # type: ignore[union-attr]
 
@@ -321,15 +369,18 @@ def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   ##
 
   if play:
+    # nominal_eval_cfg removes every training perturbation (randomization, pushes, delays,
+    # noise, curriculum), keeping what the policy sees and does. The hack check uses it too.
     from mjlab.utils.checkpoint import nominal_eval_cfg
     cfg = nominal_eval_cfg(cfg)
-    cfg.episode_length_s = int(1e9)
+    cfg.episode_length_s = int(1e9)  # never time out while watching
     for group in ("policy", "proprio_history", "height_noisy"):
-      cfg.observations[group].enable_corruption = False
+      cfg.observations[group].enable_corruption = False  # no observation noise
     cfg.events.pop("push_robot", None)
     cfg.events.pop("external_wrench", None)
     for name in list(cfg.curriculum):  # no terrain or reward curriculum in play mode
       cfg.curriculum.pop(name)
+    # Small 5 x 5 terrain with all difficulties mixed.
     if cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:
       cfg.scene.terrain.terrain_generator.curriculum = False
       cfg.scene.terrain.terrain_generator.num_cols = 5
@@ -348,8 +399,8 @@ def _go2_spec_pgtt_joints() -> mujoco.MjSpec:
   """Go2 with PGTT's passive joint damping (= Kd, 0.5; our XML has 0.1)."""
   spec = _go2_spec_with_named_calves()
   for joint in spec.joints:
-    if joint.type != mujoco.mjtJoint.mjJNT_FREE:
-      joint.damping = 0.5
+    if joint.type != mujoco.mjtJoint.mjJNT_FREE:  # every leg joint (not the floating base)
+      joint.damping = 0.5  # passive damping in Nm per rad/s, on top of the motor's Kd
   return spec
 
 
@@ -367,8 +418,9 @@ def unitree_go2_pgtt_repro_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   std instead of a state-dependent one, random initial gait phase, the teacher's extra
   observations (history, privileged state).
   """
+  # Rung 0 = the teacher task above with the parts below replaced by PGTT's.
   cfg = unitree_go2_pgtt_env_cfg(play=play)
-  set_terrain_profile(cfg, "flat")
+  set_terrain_profile(cfg, "flat")  # PGTT's flat_terrain task: an infinite plane
 
   # Robot: feet-only collisions (scene_mjx_feetonly.xml), Kp 40 with actuator Kd 0.5 plus
   # passive joint damping 0.5, no actuator delay.
@@ -376,61 +428,65 @@ def unitree_go2_pgtt_repro_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.scene.entities = {
     "robot": replace(
       go2,
-      collisions=(go2_constants.FEET_ONLY_COLLISION,),
-      spec_fn=_go2_spec_pgtt_joints,
+      collisions=(go2_constants.FEET_ONLY_COLLISION,),  # only the 4 feet touch anything
+      spec_fn=_go2_spec_pgtt_joints,  # joint damping 0.5
       articulation=replace(
         go2.articulation,
         actuators=(
+          # Plain (not delayed) motors with PGTT's gains.
           replace(go2_constants.GO2_ACTUATOR_GO2HV, stiffness=40.0, damping=0.5),
         ),
       ),
     )
   }
   # Only flipping over ends an episode.
-  cfg.terminations.pop("body_contact", None)
+  cfg.terminations.pop("body_contact", None)  # with feet-only collisions it can't fire anyway
 
   # Observations: PGTT noise (joint_pos +-0.03), no sensor delays.
   for group in cfg.observations.values():
     for term in group.terms.values():
-      term.delay_min_lag = term.delay_max_lag = 0
+      term.delay_min_lag = term.delay_max_lag = 0  # every observation arrives on time
   for group in ("policy", "proprio_history"):
     terms = cfg.observations[group].terms
-    key = "joint_pos" if "joint_pos" in terms else "joint_pos_history"
-    terms[key].noise = Unoise(n_min=-0.03, n_max=0.03)
+    key = "joint_pos" if "joint_pos" in terms else "joint_pos_history"  # name differs per group
+    terms[key].noise = Unoise(n_min=-0.03, n_max=0.03)  # +-0.03 rad joint-angle noise
 
   # Commands: uniform in [-1, 1], each axis non-zero with probability (0.9, 0.25, 0.5),
   # resampled every ~5 s.
-  twist = cfg.commands["twist"]
+  twist = cfg.commands["twist"]  # the velocity command (vx, vy, yaw rate)
   twist.axis_nonzero_prob = (0.9, 0.25, 0.5)  # type: ignore[attr-defined]
-  twist.rel_standing_envs = 0.0  # type: ignore[attr-defined]
-  twist.resampling_time_range = (2.0, 8.0)
+  twist.rel_standing_envs = 0.0  # type: ignore[attr-defined]  # no robots told to stand on purpose
+  twist.resampling_time_range = (2.0, 8.0)  # new command every 2-8 s
 
   # Events: PGTT's domain_randomize_simple; no pushes, no motor delay.
   for name in ("push_robot", "external_wrench", "effort_limits", "actuator_delay",
                "joint_friction", "encoder_bias"):
     cfg.events.pop(name, None)
+  # Reset: anywhere within +-0.5 m, any heading, standing still (+-0.1 m/s), level.
   cfg.events["reset_base"].params = {
     "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-3.14, 3.14)},
     "velocity_range": {k: (-0.1, 0.1) for k in ("x", "y", "z", "roll", "pitch", "yaw")},
   }
-  cfg.events["reset_robot_joints"].params["position_range"] = (0.0, 0.0)
+  cfg.events["reset_robot_joints"].params["position_range"] = (0.0, 0.0)  # joints at default
+  # PGTT's narrower randomization ranges (the "if" guards: play mode has none of these).
   if "body_friction" in cfg.events:
-    cfg.events["body_friction"].params["ranges"] = (0.4, 1.0)
+    cfg.events["body_friction"].params["ranges"] = (0.4, 1.0)  # friction of the robot's geoms
   if "base_mass" in cfg.events:
-    cfg.events["base_mass"].params["ranges"] = (-1.0, 1.0)
+    cfg.events["base_mass"].params["ranges"] = (-1.0, 1.0)  # kg added to the trunk
   if "joint_armature" in cfg.events:
-    cfg.events["joint_armature"].params["ranges"] = (1.0, 1.05)
+    cfg.events["joint_armature"].params["ranges"] = (1.0, 1.05)  # rotor inertia x1.0-1.05
   if "pd_gains" in cfg.events:
-    cfg.events["pd_gains"].params["kp_range"] = (0.9, 1.1)
-    cfg.events["pd_gains"].params["kd_range"] = (1.0, 1.0)
+    cfg.events["pd_gains"].params["kp_range"] = (0.9, 1.1)  # Kp x0.9-1.1
+    cfg.events["pd_gains"].params["kd_range"] = (1.0, 1.0)  # Kd unchanged
   if not play:
+    # Joint damping x0.9-1.1, sampled once per robot at startup.
     cfg.events["joint_damping"] = EventTermCfg(
       mode="startup",
       func=mdp.randomize_field,
-      domain_randomization=True,
+      domain_randomization=True,  # one value per robot (not one for all)
       params={
         "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
-        "operation": "scale",
+        "operation": "scale",  # multiply the model's value
         "field": "dof_damping",
         "ranges": (0.9, 1.1),
       },
@@ -438,40 +494,47 @@ def unitree_go2_pgtt_repro_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   # Rewards: exactly PGTT's (robots/go2 default_config + joystick_base._get_reward).
   # mjlab multiplies each by dt and clips the step's sum at 0, as PGTT does.
-  hips_only = cfg.rewards["default_pose"]
-  hips_only.weight = -0.5
-  monitor = cfg.rewards["hacking_monitor"]
-  cfg.rewards = {
+  # Each term below: per step, reward += weight x func(...) x dt (dt = 0.02 s). Weights
+  # are "per second", so a term worth -0.5/s costs 0.01 per step.
+  hips_only = cfg.rewards["default_pose"]  # keep the teacher's hips-only pose term...
+  hips_only.weight = -0.5  # ...at PGTT's weight
+  monitor = cfg.rewards["hacking_monitor"]  # weight 0: only logs Metrics/hack/* for TensorBoard
+  cfg.rewards = {  # replaces the teacher's whole reward set
+    # +1/s at most: exp(-|commanded xy velocity - actual|^2 / 0.25).
     "track_lin_vel": RewardTermCfg(
       func=mdp.track_lin_vel_xy_exp, weight=1.0, params={"command_name": "twist", "sigma": 0.25}
     ),
+    # +0.5/s at most: the same for the yaw (turning) rate.
     "track_ang_vel": RewardTermCfg(
       func=mdp.track_ang_vel_z_exp, weight=0.5, params={"command_name": "twist", "sigma": 0.25}
     ),
-    "lin_vel_z": RewardTermCfg(func=mdp.lin_vel_z_l2, weight=-2.0),
-    "ang_vel_xy": RewardTermCfg(func=mdp.ang_vel_xy_l2, weight=-0.05),
-    "default_pose": hips_only,
+    "lin_vel_z": RewardTermCfg(func=mdp.lin_vel_z_l2, weight=-2.0),  # -2 x vz^2: bouncing
+    "ang_vel_xy": RewardTermCfg(func=mdp.ang_vel_xy_l2, weight=-0.05),  # roll/pitch rates^2
+    "default_pose": hips_only,  # -0.5 x hip angles' squared distance from standing
     # PGTT: -1 inside the clip (-0.02 per episode end); ours is added after the clip.
     # Either way the cost of falling is the positive reward the robot no longer gets.
     "termination": RewardTermCfg(func=mdp.is_terminated, weight=-1.0),
-    "torques": RewardTermCfg(func=mdp.torques_pgtt, weight=-2e-6),
-    "action_rate": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.001),
+    "torques": RewardTermCfg(func=mdp.torques_pgtt, weight=-2e-6),  # motor effort
+    "action_rate": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.001),  # (a_t - a_t-1)^2
+    # +1/s at most: each foot follows the gait clock's target height (stance on the ground,
+    # swing lifted), exp(-sum over feet of error^2 / sigma).
     "foot_phase": RewardTermCfg(
-      func=mdp.foot_phase_tracking_body,
+      func=mdp.foot_phase_tracking_body,  # foot heights measured from the IMU (PGTT code)
       weight=1.0,
       params={
-        "command_name": "gait",
-        "sensor_name": "height_scanner",
+        "command_name": "gait",  # the phase clock
+        "sensor_name": "height_scanner",  # terrain under each foot (raises the swing target)
         "ref_site": "imu",
         # Feet 0.30 m below the IMU in stance, 0.20 m (+ terrain step) at the apex.
         "stance_height": -0.30,
         "swing_height": -0.20,
-        "sigma": 0.05,
-        "terrain_radius": 0.15,
-        "max_terrain_delta": 0.15,
+        "sigma": 0.05,  # m^2 on the summed squared error: how forgiving the match is
+        "terrain_radius": 0.15,  # look for steps within 15 cm of each foot
+        "max_terrain_delta": 0.15,  # raise the swing apex by at most 15 cm
         "asset_cfg": SceneEntityCfg("robot"),
       },
     ),
+    # -0.25/s per foot that touches the ground while the clock says it should swing.
     "swing_contact": RewardTermCfg(
       func=mdp.swing_foot_contact,
       weight=-0.25,
@@ -480,7 +543,7 @@ def unitree_go2_pgtt_repro_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     "hacking_monitor": monitor,
   }
   # No reward curriculum in PGTT.
-  for name in [n for n in cfg.curriculum if n.startswith("ramp_")]:
+  for name in [n for n in cfg.curriculum if n.startswith("ramp_")]:  # the penalty ramps
     cfg.curriculum.pop(name)
   return cfg
 
@@ -498,7 +561,8 @@ def unitree_go2_pgtt_repro_smooth_env_cfg(play: bool = False) -> ManagerBasedRlE
   zero clip slack early in training (a random policy pays ~0.35/s of the ~1/s it earns;
   -0.05 would pay ~0.9/s). On repro0 it costs the tremor 0.061/s and the gait 0.001/s.
   """
-  cfg = unitree_go2_pgtt_repro_env_cfg(play=play)
+  cfg = unitree_go2_pgtt_repro_env_cfg(play=play)  # rung 0...
+  # ...plus -0.02 x sum over joints of (a_t - 2 a_(t-1) + a_(t-2))^2.
   cfg.rewards["action_acc"] = RewardTermCfg(func=mdp.action_acc_l2, weight=-0.02)
   return cfg
 
@@ -507,6 +571,8 @@ def unitree_go2_pgtt_repro_smooth_env_cfg(play: bool = False) -> ManagerBasedRlE
 # The ladder from rung 0b to the full teacher (doc/reward_hacking_runs_1-3.md, "The plan").
 ##
 
+# Rung N's name is RUNG_NAMES[N - 1]; __init__.py registers Mjlab-Velocity-PGTT-Rung<N>-...
+# and train_ladder.sh names the runs rung<N>_<name>.
 RUNG_NAMES = ("collisions", "delays", "pushes", "randomization", "rewards", "commands", "terrain")
 
 
@@ -532,38 +598,41 @@ def unitree_go2_pgtt_rung_env_cfg(rung: int, play: bool = False) -> ManagerBased
   iterations. After rung 7 the remaining differences from the teacher task are these
   rewards, PGTT's joint damping and joint_pos noise, and the runner (Brax settings).
   """
-  cfg = unitree_go2_pgtt_repro_smooth_env_cfg(play=play)
-  teacher = unitree_go2_pgtt_env_cfg(play=play)
-  full = teacher.scene.entities["robot"]
+  cfg = unitree_go2_pgtt_repro_smooth_env_cfg(play=play)  # start from rung 0b
+  teacher = unitree_go2_pgtt_env_cfg(play=play)  # the full teacher: pieces are copied from it
+  full = teacher.scene.entities["robot"]  # the teacher's robot (full collisions, delayed motors)
 
-  if rung >= 1:
+  # Each block adds one change; rung N runs blocks 1..N (">=").
+  if rung >= 1:  # collisions
     robot = cfg.scene.entities["robot"]
-    cfg.scene.entities["robot"] = replace(robot, collisions=full.collisions)
-    cfg.terminations["body_contact"] = teacher.terminations["body_contact"]
-  if rung >= 2:
+    cfg.scene.entities["robot"] = replace(robot, collisions=full.collisions)  # every part touches
+    cfg.terminations["body_contact"] = teacher.terminations["body_contact"]  # trunk/hip = fall
+  if rung >= 2:  # delays
     robot = cfg.scene.entities["robot"]
     cfg.scene.entities["robot"] = replace(
       robot, articulation=replace(robot.articulation, actuators=full.articulation.actuators)
-    )
-    if "actuator_delay" in teacher.events:
+    )  # the delayed motors (0-20 ms)
+    if "actuator_delay" in teacher.events:  # the event that samples each robot's delay
       cfg.events["actuator_delay"] = teacher.events["actuator_delay"]
+    # Every observation term gets the teacher's delay range (IMU and joints 0-20 ms, the
+    # student's LiDAR map 0-60 ms).
     for group_name, group in teacher.observations.items():
       for term_name, term in group.terms.items():
         ours = cfg.observations[group_name].terms[term_name]
         ours.delay_min_lag, ours.delay_max_lag = term.delay_min_lag, term.delay_max_lag
-  if rung >= 3:
-    for name in ("push_robot", "external_wrench"):
+  if rung >= 3:  # pushes
+    for name in ("push_robot", "external_wrench"):  # velocity kicks every 4-8 s, force every 3-6 s
       if name in teacher.events:  # not in play mode
         cfg.events[name] = teacher.events[name]
-  if rung >= 4:
+  if rung >= 4:  # randomization
     cfg.events.update(teacher.events)  # keeps PGTT's joint_damping randomization
-  if rung >= 5:
+  if rung >= 5:  # rewards (weights: base_height -50, leg_contact -0.25, joint_limits -1)
     for name in ("base_height", "leg_contact", "joint_limits"):
       cfg.rewards[name] = teacher.rewards[name]
-  if rung >= 6:
+  if rung >= 6:  # commands
     cfg.commands["twist"] = teacher.commands["twist"]
-  if rung >= 7:
-    cfg.scene.terrain = teacher.scene.terrain
+  if rung >= 7:  # terrain
+    cfg.scene.terrain = teacher.scene.terrain  # mixed: stairs, slopes, rough, waves, flat
     if "terrain_levels" in teacher.curriculum:  # not in play mode
       cfg.curriculum["terrain_levels"] = teacher.curriculum["terrain_levels"]
   return cfg

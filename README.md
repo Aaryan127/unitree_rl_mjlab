@@ -11,6 +11,16 @@ with best-in-class [MuJoCo](https://github.com/google-deepmind/mujoco_warp)
 physics to provide lightweight, modular abstractions for RL robotics research
 and sim-to-real deployment.
 
+> **Branch `pgtt`: terrain-aware teacher-student locomotion for the Go2** (PGTT + Miki et al.
+> 2022). Start here:
+> - [instruction.md](instruction.md): what the branch does and where everything is.
+> - [COMMANDS.md](COMMANDS.md): every command to train, check, watch and copy runs.
+> - [doc/reward_hacking_runs_1-3.md](doc/reward_hacking_runs_1-3.md): how the teacher is
+>   built and what each run showed.
+> - [updates.md](updates.md): the progress log.
+>
+> The rest of this README is the upstream project's.
+
 <div align="center">
 
 | <div align="center">  MuJoCo </div>                                                                                                                                           | <div align="center"> Physical </div>                                                                                                                                               |

@@ -17,11 +17,24 @@ real robot. It combines two papers:
   *noisy* height map), is then trained to imitate it, using a GRU belief encoder.
 
 ```
-Stage 1  Mjlab-Velocity-PGTT-Teacher-Unitree-Go2   PPO          -> logs/rsl_rl/go2_pgtt_teacher
+Stage 1  Mjlab-Velocity-PGTT-Rung7-Unitree-Go2     PPO          -> logs/rsl_rl/go2_pgtt_repro
+         (built step by step: Repro -> Repro-Smooth -> Rung1 ... Rung7, see below)
 Stage 2  Mjlab-Velocity-PGTT-Student-Unitree-Go2   distillation -> logs/rsl_rl/go2_pgtt_student
 Stage 3  scripts/export_deploy.py                  ONNX + deploy.yaml -> deploy/robots/go2/config/policy/pgtt/v0
 Stage 4  deploy/robots/go2 (C++)                   go2_ctrl on the robot
 ```
+
+**Where it stands (2 Nov 2026):**
+- The first teacher task, `Mjlab-Velocity-PGTT-Teacher-Unitree-Go2` (`go2_pgtt_teacher`), never
+  walked. Four runs found four reward hacks.
+- The teacher is now rebuilt as a ladder:
+  - the official PGTT setup, reproduced (`Repro`, walks);
+  - then one change at a time (`Rung1` ... `Rung7`); `Rung7` is the full teacher.
+- Rungs 1-3 walk. Rung 4 (wider randomization) collapses after learning to walk; a fix is
+  being tested (`scripts/diagnose_collapse.sh`).
+- Story and results: [doc/reward_hacking_runs_1-3.md](doc/reward_hacking_runs_1-3.md).
+- Every command for training and checking: [COMMANDS.md](COMMANDS.md).
+- Progress log: [updates.md](updates.md).
 
 ## 1. Setup (once per machine)
 
@@ -86,22 +99,46 @@ command-line weights still work.
 
 ## 3. Train (GPU)
 
+The exact commands, with tmux, run names, times and what to do after a reboot, are in
+[COMMANDS.md](COMMANDS.md) (sections 4-6). In short:
+
+**Stage 1, the teacher.** It is built as a ladder (doc/reward_hacking_runs_1-3.md, "The plan"):
+
+| Task | Run name | What it adds | Status (2 Nov) |
+|---|---|---|---|
+| `Mjlab-Velocity-PGTT-Repro-Unitree-Go2` | `repro0` | the official PGTT setup (feet-only collisions, PGTT rewards, Brax PPO settings) | walks |
+| `Mjlab-Velocity-PGTT-Repro-Smooth-Unitree-Go2` | `smooth0b` | + penalty on the action's second difference (tremor) | walks |
+| `Mjlab-Velocity-PGTT-Rung1..3-Unitree-Go2` | `rung1_collisions` ... | + full collisions, delays, pushes | walk (slight kneeling) |
+| `Mjlab-Velocity-PGTT-Rung4..5-Unitree-Go2` | `rung4_randomization`, `rung5_rewards` | + our wider randomization, kneel/crouch penalties | collapse; fix being tested |
+| `Mjlab-Velocity-PGTT-Rung6..7-Unitree-Go2` | `rung6_commands`, `rung7_terrain` | + teacher commands, terrain = the full teacher | waiting |
+
 ```bash
-# Stage 1: teacher (PPO). Watch Episode_Reward/*, Curriculum/terrain_levels in tensorboard.
-python scripts/train.py Mjlab-Velocity-PGTT-Teacher-Unitree-Go2 --env.scene.num-envs=4096
-
-# Stage 2: student (distillation). Uses the latest teacher checkpoint automatically,
-# or pass one explicitly with --teacher-checkpoint logs/rsl_rl/go2_pgtt_teacher/<run>/model_<it>.pt
-python scripts/train.py Mjlab-Velocity-PGTT-Student-Unitree-Go2 --env.scene.num-envs=4096
-
-tensorboard --logdir logs
+bash scripts/train_ladder.sh            # rungs 1-7 in order, each checked; stops at a HACK
+bash scripts/diagnose_collapse.sh       # the four runs testing the rung 4/5 fix (running now)
 ```
+The full teacher run (rung 7, 10000 iterations, with the fix) is `COMMANDS.md` 4d. Judge every
+run by `scripts/check_reward_hacking.py` **and** its training curves
+(`scripts/summarize_runs.py`): the check runs without randomization and can miss a collapse.
+
+The old `Mjlab-Velocity-PGTT-Teacher-Unitree-Go2` task (and `scripts/pgtt.sh teacher`) still
+trains, into `go2_pgtt_teacher`, but its reward set never produced a walking policy.
+
+**Stage 2, the student** (not yet run on a real teacher):
+```bash
+python scripts/train.py Mjlab-Velocity-PGTT-Student-Unitree-Go2 --env.scene.num-envs=4096 \
+  --teacher-checkpoint logs/rsl_rl/go2_pgtt_repro/<run>/model_<it>.pt
+```
+Give `--teacher-checkpoint` explicitly: without it, the student takes the newest checkpoint in
+`go2_pgtt_teacher` (the old, non-walking teacher). The student task is built on the old teacher
+task's environment. Check that it loads a rung-7 teacher (same network and observation sizes)
+with a short smoke run before the real one.
+
 Student losses to watch: `behavior` (action MSE vs teacher, should fall well below 0.01)
 and `reconstruction` (height map + privileged state decoded from the GRU).
 
-Watch a policy in simulation:
+Watch a policy in simulation (more options: COMMANDS.md section 8):
 ```bash
-python scripts/play.py Mjlab-Velocity-PGTT-Teacher-Unitree-Go2 --checkpoint-file logs/rsl_rl/go2_pgtt_teacher/<run>/model_<it>.pt
+python scripts/play.py Mjlab-Velocity-PGTT-Rung7-Unitree-Go2 --checkpoint-file logs/rsl_rl/go2_pgtt_repro/<run>/model_<it>.pt --num-envs 1
 python scripts/play.py Mjlab-Velocity-PGTT-Student-Unitree-Go2 --checkpoint-file logs/rsl_rl/go2_pgtt_student/<run>/model_<it>.pt
 ```
 
@@ -188,9 +225,11 @@ Training (Python):
 | File | Role |
 |---|---|
 | `mjlab/tasks/velocity/velocity_env_cfg.py` | `make_pgtt_env_cfg()`: the task recipe (observation groups, actions, commands, events, PGTT rewards, terminations, curriculum). `make_velocity_env_cfg()` is the untouched stock task. |
-| `mjlab/tasks/velocity/config/go2/env_cfgs.py` | `unitree_go2_pgtt_env_cfg()`: Go2 sensors (foot contacts, foot normals, leg-ground contacts, 11x9 height scanner) and Go2-specific names. |
-| `mjlab/tasks/velocity/config/go2/rl_cfg.py` | Teacher PPO and student distillation configs, and `obs_groups`: which observation groups each network input uses. |
-| `mjlab/tasks/velocity/config/go2/__init__.py` | Registers the two task names. |
+| `mjlab/tasks/velocity/config/go2/env_cfgs.py` | `unitree_go2_pgtt_env_cfg()`: Go2 sensors (foot contacts, foot normals, leg-ground contacts, 11x9 height scanner) and Go2-specific names. `unitree_go2_pgtt_repro_env_cfg()`: the official PGTT setup; `..._repro_smooth_env_cfg()`: + `action_acc`; `unitree_go2_pgtt_rung_env_cfg(rung)`: the ladder, one `if rung >= N` block per change. |
+| `mjlab/tasks/velocity/config/go2/rl_cfg.py` | Teacher PPO and student distillation configs, `unitree_go2_pgtt_repro_runner_cfg()` (Brax PPO settings, used by the repro and rung tasks), and `obs_groups`: which observation groups each network input uses. |
+| `mjlab/tasks/velocity/config/go2/__init__.py` | Registers the task names (Teacher, Student, Repro, Repro-Smooth, Rung1-7). |
+| `mjlab/tasks/velocity/mdp/hacking_monitor.py` | Zero-weight term that logs behaviour metrics (`Metrics/hack/*`: base height, speed ratio, leg/body ground contact, jitter, saturation, tremor). |
+| `mjlab/managers/reward_manager.py` | `compute()`: sums each term × weight × dt, clips the sum at 0 (`only_positive`), then adds `termination`. |
 | `mjlab/tasks/velocity/mdp/gait_command.py` | Gait phase clock (per-leg phase, trot offsets, frequency). |
 | `mjlab/tasks/velocity/mdp/observations.py` | `height_scan`, `gait_phase`, `geom_friction`, `body_external_wrench`, `contact_normals`. |
 | `mjlab/tasks/velocity/mdp/rewards.py` | PGTT rewards; `foot_phase_tracking` (terrain-aware swing spline) and `swing_foot_contact` are the paper-specific ones. |
@@ -205,7 +244,12 @@ Training (Python):
 | `mjlab/rsl_rl/runners/*.py`, `mjlab/rl/config.py` | Runners know the new classes; config dataclasses for them. |
 | `scripts/train.py` | Picks PPO or distillation from the config; loads the teacher for the student. |
 | `scripts/debug_env.py` | Debugging tool (section 2); `--config` prints all rewards/curriculum/obs groups. |
-| `scripts/pgtt.sh` | Shortcuts for config, debug, smoke, train, play, export. |
+| `scripts/pgtt.sh` | Shortcuts for config, debug, smoke, train, play, export (on the old Teacher/Student tasks). |
+| `scripts/train_ladder.sh` | Trains rungs 1-7 in order, runs the hack check after each, stops at the first HACK. |
+| `scripts/diagnose_collapse.sh` | The four runs that test the rung 4/5 fix, then one comparison table. |
+| `scripts/check_reward_hacking.py` | OK / WARN / HACK per behaviour for a checkpoint (no randomization), and where the reward comes from. |
+| `scripts/summarize_runs.py` | One table per run: hack check verdict + episode length, noise std and falls from the training curves. |
+| `scripts/eval_gait.py` | Gait numbers under fixed commands (tracking per direction, swing frequency, foot lift, slip, tremor). |
 | `mjlab/utils/debug.py` | Opt-in debug mode (`MJLAB_DEBUG`, `MJLAB_DEBUG_NAN`, `MJLAB_BREAK`) hooked into the managers, env step and runners. |
 | `mjlab/tasks/velocity/mdp/curriculums.py` | `reward_weight_ramp`: regularization curriculum. |
 | `scripts/export_deploy.py` | ONNX + deploy.yaml export and verification. |

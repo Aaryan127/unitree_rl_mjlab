@@ -27,7 +27,18 @@ noise std was exactly 1.000 (the cap) at every one of 6944 iterations. See
 | v4 | `2026-10-30_16-23-42_flat_v4` (6300 checked) | bang-bang vibration, a fall every 1.2 s | entropy on the squashed action, PGTT reproduction as baseline (`15ba559`) |
 | repro0 | `go2_pgtt_repro/*_repro0` (3000) | **walks**: trot, 95% of commanded speed, no falls | baseline for the ladder |
 | smooth0b | `go2_pgtt_repro/*_smooth0b` (1500) | walks (viewer); + tremor penalty | parent of rungs 1-7 |
-| rungs 1-7 | `go2_pgtt_repro/*_rung<N>_<name>` | 1-3 finished with WARN, 4 training | [The ladder in detail](#the-ladder-in-detail-what-every-rung-trains-with) |
+| rungs 1-7 | `go2_pgtt_repro/*_rung<N>_<name>` | 1-3 walk (WARN: slight kneeling); 4 and 5 learn to walk, then collapse | [The ladder in detail](#the-ladder-in-detail-what-every-rung-trains-with) |
+| `rung4_term100` | `go2_pgtt_repro/*_rung4_term100` (1500) | kneels in place instead of falling | [Rungs 4 and 5 collapse](#rungs-4-and-5-collapse-1-nov) |
+| diagnosis | `go2_pgtt_repro/*_r[456]_*` (2 of 4 run) | both collapse: neither the fall price nor the entropy bonus is the cause | [The diagnosis batch](#the-diagnosis-batch-scriptsdiagnose_collapsesh-2-nov) |
+
+**Where things stand (2 Nov, 23:00):**
+- Rungs 0-3 walk. Rungs 4 and 5 learned to walk, then collapsed.
+- **Cause found: a bug.** Rung 4's "weaker motors" randomization made the motors weaker
+  again at *every* reset, so each robot's torque shrank over training (to ~11% after 30
+  resets). Fixed and tested. See
+  [Root cause: the motors weakened at every reset](#root-cause-the-motors-weakened-at-every-reset-2-nov).
+- Next: run rung 4 again with the fix, then rungs 5-7, then the full teacher (`COMMANDS.md` 4a/4d).
+- Commands for all of this: [COMMANDS.md](../COMMANDS.md).
 
 ## How the reward works here
 
@@ -501,7 +512,7 @@ numbers (tremor, share of action power above 6 Hz) are not measured yet; the lad
 - Repro0 is kept frozen as the parent and the control.
 - Each rung starts fresh. A rung has to show that its change can be learned from scratch,
   because the final teacher must be. repro0 reached 93% tracking by iteration 300, so
-  1500 iterations (about 1.5 hours) per rung is enough.
+  1500 iterations (about 3 hours on the 3070, ~7 s per iteration) per rung is enough.
 
 ### What `suggestions.md` raised, and where it stands
 
@@ -777,7 +788,7 @@ The official PGTT flat-ground setup, ported to mjlab (section 2 of
 | Fails when | any HACK (the chain stops) | speed ratio < 0.9 (rung 7: < 0.65 on stairs), falls ≥ 0.2/min, saturation ≥ 0.05, tremor ≥ 0.15, swings/s more than 5% off the clock, or a clear regression against the rung before |
 | WARN | counts as a pass, the chain continues | read which metric warned and whether it is new in this rung |
 
-### Status (1 Nov)
+### Status (2 Nov)
 
 | Rung | Status |
 |---|---|
@@ -788,6 +799,8 @@ The official PGTT flat-ground setup, ported to mjlab (section 2 of
 | 5 rewards | finished, **HACK**: 58 falls per robot-minute, speed ratio 0.03; the chain stopped. Same collapse as rung 4, faster |
 | 6-7 | not run |
 | 4 again (`rung4_term100`) | finished, **HACK**: kneels in place. `leg_ground_frac` **0.645**, speed ratio **0.005**, base 0.249 m, falls 5.6/min (fell_over 27, body_contact 10) |
+| diagnosis (2 of 4 runs) | both collapse (`r5_term100`, `r4_ent001`): see [The diagnosis batch](#the-diagnosis-batch-scriptsdiagnose_collapsesh-2-nov) |
+| **rungs 4-7: to run again** | every rung-4+ result so far was trained with the motor bug: see [Root cause](#root-cause-the-motors-weakened-at-every-reset-2-nov) |
 
 **Seen in the viewer (rungs 1-4):**
 - In rungs 1-3 the hind legs kneel slightly at low commanded speeds, sometimes with the body
@@ -982,6 +995,274 @@ Four 1500-iteration runs, back to back. Each answers one question:
 | 1, 3 fail | Rung 4's randomization itself is the problem. Next: split rung 4's events to find which one. |
 | 1 passes, 4 fails | The teacher's commands break it. Rung 6 needs its own fix before the full run. |
 
+**How to run it and read the result:** `COMMANDS.md` 4c (start, restart after a reboot) and 9d
+(the comparison table, `scripts/summarize_runs.py`). The script writes the table to
+`logs/rsl_rl/go2_pgtt_repro/diagnosis.txt` when all four are done.
+
+**Progress:**
+
+| When | What |
+|---|---|
+| 2 Nov 14:35 | started; `r5_term100` reached iteration 162 |
+| 2 Nov ~15:28 | the GPU machine rebooted, which killed the batch. At 162: episode length 867, noise std 0.316, body_contact 0.7, slightly healthier than rungs 4 and 5 at iteration 100. Too early to judge: their decline began after 200-400. |
+| 2 Nov 16:36 | restarted from experiment 1 (~12 h for all four) |
+| 2 Nov 17:24 | the GPU machine restarted again, which killed it. Restarted at 18:20 |
+| 2 Nov 18:20-~20:10 | `r5_term100` finished: 1500 iterations and the check |
+| 2 Nov ~20:11-21:50 | `r4_ent001` reached iteration 997, then the machine crashed a third time. It has checkpoints but no check |
+| 2 Nov 22:38 | table printed (`diagnosis.txt`). `r5_term100_ent001` and `r6_term100` not run |
+
+**Results (2 Nov, 2 of 4 runs).** Curves at iteration 200 / 800 / last:
+
+| Run | Hack check | Episode length | Noise std | `body_contact` endings |
+|---|---|---|---|---|
+| `rung4_term100` (1 Nov) | HACK: speed ratio 0.005, falls 5.6/min, legs down 0.645, base 0.249 m | 909 / 887 / 206 | 0.304 / 0.361 / 0.507 | 0.8 / 0.9 / 19.7 |
+| `r5_term100` | HACK: speed ratio 0.038, falls 6.2/min, legs down 0.290, base 0.252 m | 847 / 662 / **119** | 0.297 / 0.400 / **0.639** | 0.9 / 3.1 / **32** |
+| `r4_ent001` (to 997) | at `model_900` (the newer checkpoints were cut off by the crash, empty files): HACK, legs down **0.444**, speed ratio 0.569, falls **0.19/min**, base 0.289 m | 779 / 621 / 414 | 0.233 / **0.141 / 0.143** | 1.3 / 3.65 / 8.7 |
+
+What this shows:
+1. **Run 1 fails.** A fall that costs 2 instead of 0.02, plus the kneel penalty, still
+   collapses, and in the same way and at the same time as plain rung 5. **Cheap falls (H1) are
+   not the main cause.**
+2. **Run 2 fails too, even before its end.** With a tenth of the bonus, the noise std goes
+   *down* (0.23 → 0.14) and stays there, but the falls still climb (1.3 → 8.7) and the
+   episodes shorten (779 → 414). The robot gets worse with almost no noise, so the
+   **mean action itself degrades. The entropy bonus (H2) is not the cause**; the rising std
+   in the other runs is a symptom.
+3. In the nominal check (no randomization), the robots fall ~6/min. In training (with
+   rung 4's randomization), the episodes end after ~2-4 s. **Most falls happen on the
+   randomized robots.** This fits H5 or a specific rung 4 item. It is also why the nominal
+   check rated rung 4 only a WARN.
+4. **The common sign is the legs on the ground.** `r4_ent001` at 900 still walks (speed ratio
+   0.57) and hardly falls in the nominal check (0.19/min), but drags or kneels on a leg 44%
+   of the time. The trend began before rung 4: rungs 1-3 had legs down 0.001 → 0.099 →
+   0.248. The term100 runs have stopped walking (speed ratio ≤ 0.04) and sit low (base
+   ~0.25 m). A reading to test, not a finding: the policy leans on its legs more and more, and
+   on the randomized robots (weaker motors, heavier trunks) the low posture tips into a hip or
+   trunk contact, which ends the episode. Leg contacts also grip well (μ 1.0, see 7f below),
+   so a knee is a useful prop. H4 is still open.
+
+Per the table "What each outcome means" (row "1, 3 fail"), **rung 4's randomization itself is
+the problem.** Runs 3 and 4 are dropped: each combines changes that have both failed (3), or
+builds on a run that failed (4). Next: find *which* rung 4 item causes it. Cheapest first:
+tests T1/T2 on the existing checkpoints (minutes), then the 4L/4S bisection (~6 h) only if
+they don't point at one item. See "What we are missing" below.
+
+**Update (2 Nov, 23:00):** the rung 4 item was found by reading the code: `effort_limits`
+compounded at every reset. See [Root cause](#root-cause-the-motors-weakened-at-every-reset-2-nov).
+
+### Root cause: the motors weakened at every reset (2 Nov)
+
+**Found while writing test T2** (falls per robot parameter), by reading how each randomization
+event stores its value.
+
+- **The bug.** Rung 4 adds `effort_limits`: at every reset, each motor's maximum torque is
+  multiplied by a random 0.85-1.0. The code (`randomize_effort_limits` in
+  `mjlab/envs/mdp/events.py`, from the original repo) multiplied the *current* limit, not
+  the original one. So the factors piled up:
+
+  | Resets of a robot | Mean max torque (nominal 23.5 Nm) |
+  |---|---|
+  | 1 | 21.9 |
+  | 5 | 16.4 |
+  | 10 | 11.4 |
+  | 20 | 5.3 |
+  | 30 | 2.6 (11%) |
+
+  Measured by resetting a rung 4 environment 30 times. `randomize_pd_gains`, right above it,
+  already scales the stored defaults and has a comment saying why.
+- **Why it fits every observation.** A robot resets at least every 20 s (a time-out), which is
+  every 50 iterations, and more often when it falls.
+
+  | Observation | Explained by |
+  |---|---|
+  | rung 4 walks at iteration 200, then gets worse | at 200 a robot has had ≥4 resets (~74% torque); by 1500 ≥30 (~11%) |
+  | the collapse speeds up | weak robots fall, falling resets them, each reset weakens them further |
+  | rungs 0-3 are fine | they don't have `effort_limits` (rung 0 removes it) |
+  | a 100× fall price (`r5_term100`) and a 10× smaller entropy bonus (`r4_ent001`) don't help | neither changes the motors |
+  | the noise std rises late | once most robots can't stand, nothing the policy does pays, and the entropy bonus wins |
+  | more and more kneeling (`leg_ground_frac` 0.44-0.65), body ~0.25 m | weak motors can't hold the stance; a knee on the ground (μ 1.0) takes the load |
+  | the nominal check looks much calmer than training | it removes `effort_limits`, so it runs with full-strength motors |
+
+  This is a strong candidate for the whole rung 4/5 collapse. It is not yet proven: that
+  needs rung 4 trained again with the fix (below).
+- **The fix.** Scale the stored default limit, as `randomize_pd_gains` does (both branches:
+  MuJoCo position actuators and `IdealPdActuator`). After 30 resets the torque now stays
+  between 20.0 and 23.5 Nm. The regression test
+  `tests/test_pgtt_audit.py::test_effort_limits_do_not_compound_over_resets` fails on the old
+  code (2.7 Nm after 20 resets) and passes on the new one.
+- **What it invalidates.**
+  - Every run with `effort_limits`: rungs 4 and 5, `rung4_term100`, the diagnosis runs, and the
+    old teacher runs v1-v4 (the teacher task has it too). Rungs 0-3 and repro0/smooth0b are
+    unaffected.
+  - In hindsight, v2's "walk at 500, then fall on purpose" has the same shape. The motor bug
+    may have contributed to v1-v4 as well. That's a candidate, not checked.
+  - The hypotheses and lessons written before this (H1 cheap falls, lesson 14) were reasoning
+    about a robot whose motors were silently fading. Keep them as candidates for the fixed
+    setup, not as findings.
+- **What it does not explain:** the slight kneeling in rungs 1-3 (`leg_ground_frac` 0.001 →
+  0.099 → 0.248), which has no `effort_limits`. That is still the reward's blind spot from
+  [Status](#status-2-nov). Rung 5's `leg_contact` term is still its test.
+- **Next:**
+  1. Rung 4 again with the fix, 1500 iterations (`bash scripts/train_ladder.sh 4`).
+     Pass: the curves stay like rung 3's past iteration 800, and
+     `check_reward_hacking.py --randomized True` shows no collapse.
+  2. If it passes, the ladder continues to rungs 5-7.
+  3. Then seed 2 and the full teacher.
+
+#### Tests T1 and T2: `check_reward_hacking.py --randomized True`
+
+The check can now run under the training conditions: domain randomization, pushes, delays and
+sensor noise, with only the curricula off. Then it prints a table, one row per third of each
+randomized robot parameter (low / middle / high value):
+
+```
+per robot parameter, in thirds (low / middle / high value):
+  parameter           third              range falls/min legs down  speed
+  motor_strength      low       0.902-0.924         ...
+```
+
+| Column | Meaning |
+|---|---|
+| `falls/min` | falls per robot-minute |
+| `legs down` | share of time with a thigh or calf on the ground |
+| `speed` | speed ratio |
+
+The parameters:
+
+| Parameter | What it is |
+|---|---|
+| `motor_strength` | torque limit ÷ nominal |
+| `kp_scale`, `kd_scale` | Kp and Kd ÷ nominal |
+| `trunk_mass_add_kg` | mass added to the trunk |
+| `leg_mass_scale` | leg mass ÷ nominal |
+| `trunk_com_x_m` | trunk centre of mass shift forward |
+| `foot_friction` | foot friction coefficient |
+| `joint_friction_nm` | joint friction |
+| `armature_scale` | rotor inertia ÷ nominal |
+| `encoder_bias_rad` | joint encoder error |
+
+A parameter whose thirds differ a lot is where the falls come from. It also prints how many
+falls happened within 0.5 s of a reset (T3: the reset state, not the gait). Use ≥1024 robots,
+so each third has enough falls to compare.
+
+It runs the *current* code. Old checkpoints are then checked with the fixed motors, not the
+fading ones they were trained with.
+
+### What we are missing: hypotheses, predictions and next rungs (2 Nov, before any batch result)
+
+Written on 2 Nov 2026 while `r5_term100` was still training, before any of the four batch
+results was seen, so the predictions below can't be fitted to them afterwards. Everything here
+is a **candidate**: nothing is established until a test below supports it. No literature
+search was done for this section. The mentions of Miki et al. 2022 are from memory and are
+not verified here.
+
+#### The observations, as measured
+
+| # | Run | Measured | Limits of the measurement |
+|---|---|---|---|
+| O1 | rungs 1-3 | walk; legs on the ground 0.001 → 0.099 → 0.248 of the time; base 0.285 → 0.277 m; 0 falls | nominal check only (no randomization); one seed each |
+| O2 | rung 4 | best at iteration 200 (811-step episodes); then trunk/hip endings per step 1.25 → 18.4; `foot_phase` per second alive 0.95 → 0.37; noise std turns up only after ~600 (0.287 → 0.387); value loss keeps falling; kneels in the viewer at 1200 | stopped at ~1200; nominal check WARN; one seed |
+| O3 | rung 5 | same shape, faster; std 0.58; entropy +5.7; value loss → 2e-6; in the **nominal** check: 58 falls/min, speed ratio 0.03, deterministic tremor 0.52 | one seed |
+| O4 | `rung4_term100` | nominal check: legs on the ground 0.645, speed ratio 0.005, base 0.249 m, falls 5.6/min, `foot_phase` 55% of the positive reward | training curves not read yet; one seed |
+| O5 | all | the hack check never tests the training randomization; we never measured **which** randomized robots fall | — |
+
+O3 matters: rung 5 falls even on the **nominal** robot, so by the end the policy itself is
+broken, not only its behaviour on the hard robots.
+
+#### What is lacking (independent of which hypothesis wins)
+
+1. **Rung 4 is not one change.** It changes about 10 things at once:
+   - friction range;
+   - trunk mass;
+   - Kp/Kd;
+   - rotor inertia;
+   - motor strength;
+   - joint friction;
+   - encoder bias;
+   - reset tilt, reset joint offsets and reset velocity.
+
+   That is the mistake the ladder was built to avoid, so a rung 4 failure can't be pinned on
+   a cause.
+2. **We can't see which robots fail.** Nothing records a robot's sampled mass, strength or
+   friction next to its falls. Nothing checks a policy under the training randomization.
+3. **The reward ordering was never checked for the PGTT reward with full collisions.**
+   Lesson 1 says to score walking, standing, stepping in place and kneeling against each
+   other. That was done for v1's reward set, never for the set the ladder trains with. O4
+   suggests kneel-stepping earns a large share of what walking earns.
+4. **A fall costs 0.02.** Compare that with the ~1-1.5 the robot expects to earn over its
+   0.7 s horizon.
+5. **One seed per configuration.** A single collapse or a single success can be luck.
+
+#### Candidate explanations (rivals from different classes)
+
+| ID | Candidate | Class |
+|---|---|---|
+| H1 | **Hard-robot abandonment.** Rung 4 creates heavy, weak, slippery robots that earn little upright. A fall costs 0.02, so the shared policy loses little by letting them sag and fall. The degradation then spreads to all robots. | mechanism (reward × randomization) |
+| H2 | **The entropy bonus drives it.** Once the reward signal weakens, the constant 0.01 bonus wins and the std grows until the actions fall apart. | mechanism (optimizer) |
+| H3 | **Reset states.** Rung 4's tilted, moving resets with offset joints cause falls in the first second, independent of the learned behaviour. | artifact of a specific change |
+| H4 | **Wrong reward ordering.** Kneel-stepping or stepping in place pays nearly as much as walking, so under harder dynamics it becomes the better bet. Kneeling then brings the hips near the ground. | mechanism (reward design) |
+| H5 | **Infeasible robots.** Some combinations (+2 kg, 85% strength, Kp ×0.85) can't hold the standing pose against Kp 40 without sagging onto the hips. | physical feasibility |
+| H6 | **Seed or chance.** The collapse is one bad run per configuration. | stochastic variation |
+| H7 | **Measurement artifact.** Hip-ground contacts in a low but healthy stance count as falls. | measurement |
+
+What the data already says (from O2 and O3):
+- **H2 as the sole cause** is weakened: in rung 4 the falls and the per-second `foot_phase` drop
+  came before the std turned up. It remains a candidate amplifier.
+- **H7** is weakened: rung 5's falls are mostly `fell_over` (tilt) in the nominal check.
+- **H3** is weakened: a reset effect should be present from iteration 0, not grow over
+  training.
+- None of them is ruled out.
+
+#### Predictions for the running batch (fixed before the results)
+
+| Result pattern | Supports | Weakens |
+|---|---|---|
+| `r5_term100` passes (falls < 0.2/min, legs on the ground < 0.1, speed ratio ≥ 0.8, curves like rung 3) and `r4_ent001` collapses like rung 4 | H1 + H4 (cheap falls plus a free kneel) | H2 as primary |
+| `r4_ent001` passes, `r5_term100` collapses with the std rising | H2 | H1 |
+| Only `r5_term100_ent001` passes | H1/H4 and H2 together | either alone |
+| `r5_term100` doesn't fall but **stands or steps in place** (speed ratio < 0.5, legs mostly up) | H4 in its "step in place upright" form: pricing falls and kneels moves it to the next free posture | H1 as sufficient |
+| All four collapse | H5, or a specific rung 4 item not covered by these runs; also H6 | H1/H2 as the only causes |
+| `r6_term100` fails while `r5_term100` passes | the teacher's commands (all three axes at once, 5% standing) are a separate problem | — |
+
+An outcome that falls between two rows (e.g. a pass on the check but curves that start to
+drift) is **indeterminate**. It calls for a second seed, not a conclusion.
+
+#### Tests that need no training run (proposed, not yet built)
+
+These need small additions to `check_reward_hacking.py` and would only be built after
+approval.
+
+| Test | What it measures | Separates |
+|---|---|---|
+| T1 `--randomized` check | the same metrics with the training randomization kept | lacking item 2; checks O2 directly |
+| T2 per-robot fall attribution | each robot's sampled mass, strength and friction next to its falls, as falls per bin | H1 (falls pile up in the hard bins) vs H2/H6 (spread evenly) |
+| T3 falls by episode age | share of falls in the first 0.5 s after a reset | H3 (mostly early) vs the rest |
+| T4 cross-evaluation | reward per second of known behaviours in the rung 4/5 env with randomization: `rung3_pushes` (walks), `rung4_term100` (kneel-steps), a zero-action policy (stands) | H4: if kneel-stepping earns ≥ 90% of walking, the ordering is broken |
+| T5 standing-sag test | zero-action base height for the extreme robots (+2 kg, 85% strength, Kp ×0.85, friction 0.3) | H5: sagging to hip contact means rung 4 contains infeasible robots |
+
+#### Rungs to add, depending on the result
+
+The ladder rule is one change per rung, judged against fixed criteria. Which rungs to run
+follows from the prediction table:
+
+| Rung | Change against its parent | Run it if |
+|---|---|---|
+| **4L** "load" (parent: rung 3) | rung 4's mass, motor strength, Kp/Kd and friction ranges only | all four batch runs fail: one half of a bisection of rung 4 |
+| **4S** "state and sensing" (parent: rung 3) | rung 4's reset tilt/velocity/joint offsets, joint friction, rotor inertia and encoder bias only | the other half (4L and 4S run back to back, ~6 h). Then split whichever half fails. |
+| **5c** "coupled gait reward" (parent: winning rung 5 setup) | `foot_phase × (0.5 + 0.5 × track_lin_vel)` (needs a new reward function) | the "stands or steps in place" outcome (H4) |
+| **5k** "sustained kneel ends the episode" (parent: winning rung 5 setup) | a termination when any thigh/calf stays on the ground > 0.2 s | 5c still kneels |
+| **4C** "randomization curriculum" (parent: rung 3) | rung 4's ranges, widened from rung 3's values over the first ~1000 iterations | H1 is supported but the fall cost alone isn't enough. A fix, not a diagnosis: it changes two things over time, so judge it only after the widening ends. |
+| **seed 2** of the winner | `--agent.seed 2`, nothing else | always, before the 10000-iteration teacher (H6) |
+
+A **7f "leg friction"** rung was planned here and dropped on 2 Nov after a check: the legs are
+*not* frictionless. Their geoms have `condim=1`, but a contact between two geoms of the same
+priority uses the larger `condim` and the larger friction of the two. Against the terrain
+(`condim=3`, μ 1.0), a thigh or calf contact gets a full friction cone with μ **1.0**, more grip
+than the feet (μ 0.6, priority 1, so the foot's own value is used). Checked by dropping a folded
+Go2 in the rung 4 scene: every ground contact had `dim 3, mu 1.0`.
+
+Bisection (4L/4S) costs about 6 h. Splitting rung 4 into its ~10 items would cost about 30 h.
+
 ## Lessons
 
 1. **Check the ordering of behaviours, not single weights.** Score scripted behaviours (stand,
@@ -1016,6 +1297,12 @@ Four 1500-iteration runs, back to back. Each answers one question:
     the policy little, and the falls spread.
 15. **A check without randomization can't see a collapse under randomization.** Rung 4's
     check said WARN while its training episodes had shrunk from 811 to 173 steps.
+16. **When training gets worse over time, look for something in the environment that changes
+    over time.** The rung 4 collapse came from a randomization that piled up at every reset:
+    the motors faded to ~11% over training. Two diagnosis runs (12 h with the crashes) tested
+    the policy side (the fall price, the entropy bonus); reading the event code found it in
+    minutes. Check that randomized parameters stay in range after many resets, with a test.
+    (Lesson 14 was written before this was known.)
 
 ## What to watch in a rung run (repro0, 0b, ...)
 
