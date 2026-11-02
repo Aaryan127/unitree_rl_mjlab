@@ -740,12 +740,13 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
     # Added after the only_positive_rewards clip, so it always applies (PGTT has it
     # inside the clip, where it does almost nothing).
     "termination": RewardTermCfg(func=mdp.is_terminated, weight=-100.0),
-    # Base below 0.25 m above the terrain (walks at ~0.27-0.30): -50 * (0.25 - h)^2,
-    # e.g. -0.8/s at 0.12 m. One-sided, so standing taller is not rewarded.
+    # Base below 0.265 m above the terrain (walks at ~0.27-0.30): -50 * (0.265 - h)^2,
+    # e.g. -0.21/s at 0.20 m, -1.05/s at 0.12 m. One-sided, so standing taller is not
+    # rewarded. Was 0.25 until 3 Nov (rung 5 then sat at 0.278, rung 4 kneeled at ~0.25).
     "base_height": RewardTermCfg(
       func=mdp.base_height_below,
       weight=-50.0,
-      params={"sensor_name": "height_scanner", "target": 0.25},
+      params={"sensor_name": "height_scanner", "target": 0.265},
     ),
     "joint_power": RewardTermCfg(func=mdp.joint_power, weight=-2e-5),  # |torque| x |speed|, watts
     # On tanh-bounded actions: vibrating +-1 every step costs 0.48/s, a smooth gait

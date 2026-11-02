@@ -793,8 +793,8 @@ def base_height_below(
   One-sided, so it stops crouching / lying low without paying the robot to stand
   taller. 0 if no ray hit the ground near the base.
   """
-  # Rung 5+ (weight -50, target 0.25 m): 0 at the walking height (~0.28 m);
-  # -50 x (0.25 - 0.20)^2 = -0.125/s at 0.20 m, -0.8/s at 0.12 m.
+  # Rung 5+ (weight -50, target 0.265 m): 0 at the walking height (~0.28 m);
+  # -50 x (0.265 - 0.20)^2 = -0.21/s at 0.20 m, -1.05/s at 0.12 m.
   h = base_height_above_terrain(env, sensor_name, radius)  # [B]
   # clamp(min=0): only being too LOW counts. nan_to_num: no ray near the base -> 0.
   return torch.nan_to_num(torch.square(torch.clamp(target - h, min=0.0)), nan=0.0)

@@ -180,7 +180,7 @@ and the export writes the training gains into `deploy.yaml`.
 | `lin_vel_z` / `ang_vel_xy` | −2.0 / −0.05 | PGTT: no bouncing or wobbling |
 | `default_pose` | −0.5, hips only | PGTT: legs don't splay sideways |
 | `termination` | −100 (= −2 per fall) | after the clip, so a fall always costs |
-| `base_height` | −50 below 0.25 m | ours: crouching costs (PGTT's robot cannot lie down) |
+| `base_height` | −50 below 0.265 m (0.25 m before 3 Nov) | ours: crouching costs (PGTT's robot cannot lie down) |
 | `leg_contact` | −0.25, ramped | ours: kneeling costs |
 | `action_rate` | −0.01, ramped | vibrating ±1 costs ~0.5/s; PGTT's −0.001 would make it free |
 | `orientation`, `joint_limits` | −0.2, −1.0 | small safety terms; PGTT 0 |
@@ -715,7 +715,7 @@ The official PGTT flat-ground setup, ported to mjlab (section 2 of
 
   | Term | Weight | Value | What it stops | Cost /s |
   |---|---|---|---|---|
-  | `base_height` | −50 | (0.25 − h)² when the base is lower than 0.25 m above the ground under it, else 0 | crouching or crawling | 0 at walking height (~0.28 m); −0.125 at 0.20 m, −0.5 at 0.15 m |
+  | `base_height` | −50 | (0.265 − h)² when the base is lower than 0.265 m above the ground under it, else 0 (target 0.25 m before 3 Nov) | crouching or crawling | 0 at walking height (~0.28 m); −0.011 at 0.25 m, −0.21 at 0.20 m, −0.66 at 0.15 m |
   | `leg_contact` | −0.25 | number of thigh/calf collision geoms touching the ground (0-12) | kneeling, dragging a shin, resting a knee on a step | −0.25 per touching geom |
   | `joint_limits` | −1.0 | how far (rad) the joints are past their soft limits, summed | pressing into the joint stops | 0 inside the limits |
 - **Why:** from rung 1 the robot can kneel and crawl, and on stairs (rung 7) resting a shin
@@ -733,6 +733,22 @@ The official PGTT flat-ground setup, ported to mjlab (section 2 of
   once it walks), speed ratio (should not drop).
 - **Result (1 Nov):** HACK, falls about once a second. The cause is in rung 4; see
   [Rungs 4 and 5 collapse](#rungs-4-and-5-collapse-1-nov).
+- **Result with the motor fix (3 Nov):** walks, legs off the ground, body at 0.278 m (see
+  [Root cause](#root-cause-the-motors-weakened-at-every-reset-2-nov)). This run used the
+  0.25 m target.
+- **Target raised to 0.265 m (3 Nov), weight kept at −50.** This brings the threshold up to
+  just under the walking height, so a slight sag (rung 4's ~0.25 m) starts to cost. The
+  weight stays at −50 because `base_height` is inside the zero clip. A random early policy
+  sits at ~0.20 m and earns ~1/s. At −50 it pays 0.21/s there, which leaves the clip slack.
+  At −300 it would pay 1.3/s, and most early steps would score exactly 0, with no
+  gradient (lesson 4 and the 0b reasoning).
+
+  A stronger weight would also fight the crouch that stairs need in rung 7 (the height is
+  measured against the ground within 0.2 m of the trunk). `leg_contact`, not
+  `base_height`, is what stops the kneeling.
+
+  The ladder that is running keeps 0.25 for rungs 5-7 (one change per rung). 0.265 applies
+  from the full teacher on.
 
 ### Rung 6 (`rung6_commands`): harder commands
 
@@ -800,6 +816,7 @@ The official PGTT flat-ground setup, ported to mjlab (section 2 of
 | 6-7 | not run |
 | 4 again (`rung4_term100`) | finished, **HACK**: kneels in place. `leg_ground_frac` **0.645**, speed ratio **0.005**, base 0.249 m, falls 5.6/min (fell_over 27, body_contact 10) |
 | diagnosis (2 of 4 runs) | both collapse (`r5_term100`, `r4_ent001`): see [The diagnosis batch](#the-diagnosis-batch-scriptsdiagnose_collapsesh-2-nov) |
+| 4 again, with the motor fix (`2026-11-02_23-13-26_rung4_randomization`) | finished, **WARN**: `leg_ground_frac` **0.297** (HACK from 0.3), plus tremor. No collapse. The kneeling trend of rungs 1-3 continues (0.001 → 0.099 → 0.248 → 0.297): rung 4 has no `leg_contact` term, and its weaker motors and heavier trunk make leaning on a leg more useful. Rung 5's term is the fix: rung 5 trains with legs down 0.0005 |
 | **rungs 4-7: to run again** | every rung-4+ result so far was trained with the motor bug: see [Root cause](#root-cause-the-motors-weakened-at-every-reset-2-nov) |
 
 **Seen in the viewer (rungs 1-4):**
@@ -1108,6 +1125,13 @@ event stores its value.
      `check_reward_hacking.py --randomized True` shows no collapse.
   2. If it passes, the ladder continues to rungs 5-7.
   3. Then seed 2 and the full teacher.
+- **First result (3 Nov, ladder restarted at rung 4 with the fix):** rung 4 finished without a
+  HACK, and the ladder went on to rung 5. Rung 5 at iteration ~1260, past the point where every
+  earlier rung 4/5 run had collapsed: episode length 996, speed ratio 0.91, noise std 0.21,
+  entropy −6.2 (rung 3: 0.22 and −6), `fell_over` 0, `body_contact` 0.1, legs on the
+  ground 0.0005 (the kneeling is gone), body 0.278 m. Before the fix, rung 5 at the end had
+  episode length 173, speed ratio 0.03 and 58 falls/min. This is what the motor bug predicted.
+  Still to come: rung 5's hack check, and rung 4's `--randomized True` check.
 
 #### Tests T1 and T2: `check_reward_hacking.py --randomized True`
 
