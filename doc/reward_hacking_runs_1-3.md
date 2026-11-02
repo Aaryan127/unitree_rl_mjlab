@@ -1,4 +1,4 @@
-# Reward hacking in the PGTT teacher: runs 1-4, the fixes, and the first walking policy
+# Reward hacking in the PGTT teacher: runs 1-4, the fixes, the first walking policy, and the ladder
 
 Four flat-ground teacher runs (27-31 Oct 2026) each found a different way to score without
 walking: v1 lay down and paddled, v2 fell on purpose, v3 vibrated its joints, v4 (with
@@ -26,12 +26,14 @@ noise std was exactly 1.000 (the cap) at every one of 6944 iterations. See
 | v3 | `*_flat_v3` (10000) | vibrate the joints between their limits | tanh-bounded actions, PGTT gains and foot-phase formula (`3164449`) |
 | v4 | `2026-10-30_16-23-42_flat_v4` (6300 checked) | bang-bang vibration, a fall every 1.2 s | entropy on the squashed action, PGTT reproduction as baseline (`15ba559`) |
 | repro0 | `go2_pgtt_repro/*_repro0` (3000) | **walks**: trot, 95% of commanded speed, no falls | baseline for the ladder |
+| smooth0b | `go2_pgtt_repro/*_smooth0b` (1500) | walks (viewer); + tremor penalty | parent of rungs 1-7 |
+| rungs 1-7 | `go2_pgtt_repro/*_rung<N>_<name>` | 1-3 finished with WARN, 4 training | [The ladder in detail](#the-ladder-in-detail-what-every-rung-trains-with) |
 
 ## How the reward works here
 
 - Every term is `weight × value × dt` (dt = 0.02 s), summed each step. Below, rewards are given
   per second (`weight × value`), which is what the scripted measurements report.
-- PPO maximises the discounted sum of future rewards (γ = 0.99). An episode ends at 20 s
+- PPO maximises the discounted sum of future rewards (γ = 0.99 in runs 1-4, 0.97 from rung 0 on). An episode ends at 20 s
   (time-out, the future is bootstrapped) or early on a failure (no future reward).
 - So two things decide behaviour: which behaviour earns the most per second, and whether
   ending the episode early is cheaper than staying alive.
@@ -354,7 +356,8 @@ PGTT trains 200M steps, which is about 2440 iterations here.
 **Rungs 1-7 as built** (`unitree_go2_pgtt_rung_env_cfg`, tasks
 `Mjlab-Velocity-PGTT-Rung<N>-Unitree-Go2`, all trained in a row by `scripts/train_ladder.sh`).
 Each rung copies its change from the full teacher config, so rung 7 is the teacher except
-for what is listed under "left out".
+for what is listed under "left out". Every rung's settings and rewards in full:
+[The ladder in detail](#the-ladder-in-detail-what-every-rung-trains-with).
 
 | Rung | Run name | Adds (on top of the rung before) | Iterations |
 |---|---|---|---|
@@ -514,6 +517,471 @@ numbers (tremor, share of action power above 6 Hz) are not measured yet; the lad
 | Split rungs (collisions vs termination, motor vs sensor delay) | Adopted where cheap: split if a combined rung fails. |
 | Checker samples after resets; per-cause falls can double count | Doesn't affect a run with zero falls. Still to fix before rungs with falls. |
 
+## The ladder in detail: what every rung trains with
+
+This section describes every rung completely: the robot, the world, the commands, the
+rewards and the training settings, with the code each comes from. Rung 0b is described in
+full; each later rung lists only what it changes, and keeps everything else from the rung
+before it.
+
+**Why a ladder.** v1-v4 changed about 15 things at once against the published setup, and
+none of them walked. A failure could not be traced to any one change. Each rung adds exactly
+one change to a setup that walks and trains a new policy from scratch. If rung N fails and
+rung N-1 passed, rung N's change caused it. That one difference was checked by diffing the
+complete flattened configs of neighbouring rungs.
+
+**Where it lives.**
+- Configs: `unitree_go2_pgtt_repro_env_cfg` (rung 0),
+  `unitree_go2_pgtt_repro_smooth_env_cfg` (0b) and `unitree_go2_pgtt_rung_env_cfg(rung)`
+  (1-7), all in `mjlab/tasks/velocity/config/go2/env_cfgs.py`.
+- Tasks: `Mjlab-Velocity-PGTT-Repro-Unitree-Go2`, `...-Repro-Smooth-...`,
+  `...-Rung1-...` to `...-Rung7-...`.
+- Runs: `logs/rsl_rl/go2_pgtt_repro/<date>_<time>_<run name>/`.
+- Rungs 1-7 are trained in a row by `scripts/train_ladder.sh`, which stops at the first HACK.
+
+### What every rung shares
+
+**Policy and training (the same for all rungs: `unitree_go2_pgtt_repro_runner_cfg`).**
+- Actor and critic MLPs 512-256-128, ELU.
+- The actor sees `policy` (base angular velocity, gravity direction, the command, joint
+  positions and velocities, the last action, the gait phase), `proprio_history` (the last
+  3 joint positions, 2 joint velocities and 2 actions), `height` (11 × 9 clean height scan
+  around the base) and `privileged` (base linear velocity, foot contacts, forces and normals,
+  foot friction, leg-ground contact, the external force on the base).
+- The critic sees the same plus the clean `critic` group.
+- PPO with Brax's (PGTT's) settings:
+
+  | Setting | Value |
+  |---|---|
+  | γ | 0.97 |
+  | λ | 0.95 |
+  | learning rate | 3e-4, fixed |
+  | epochs × mini-batches | 8 × 4 |
+  | clip | 0.3 |
+  | entropy | 0.01, on the tanh-squashed action (the v4 fix) |
+  | initial std | 0.7 |
+  | rollout | 4096 robots × 20 steps per iteration |
+  | checkpoints | every 100 iterations |
+
+**Actions.** 12 joint position targets: `target = default pose + 0.5 × tanh(z)`, so each
+target stays within ±0.5 rad of the standing pose. A PD controller tracks them with Kp 40,
+Kd 0.5, plus passive joint damping 0.5 (PGTT). Policy at 50 Hz (dt 0.02 s), physics at
+200 Hz.
+
+**Gait clock.** Each robot gets a trot clock at 1-3 Hz. The diagonal feet share a phase:
+the first half of a cycle is stance, the second half swing. The clock is in the observations
+and drives `foot_phase` and `swing_contact`.
+
+**Episode.** 20 s. Flipping over (tilt > 90°) ends it from rung 0 on; trunk or hip contact
+ends it from rung 1 on.
+
+### How the reward is computed (all rungs)
+
+- Each step: `r = clip( Σ_terms weight × value × dt , min 0 ) + termination term`.
+- The clip at 0 is PGTT's: a step's reward is never negative, so staying alive never costs
+  more than dying (the v2 lesson).
+- The termination term is added after the clip, so a fall always costs something.
+- Per second, the most a step can pay is **2.5**: 1.0 linear tracking + 0.5 turn tracking +
+  1.0 foot phase. Everything else is a penalty.
+
+### Reward terms of rungs 0b-4 (PGTT's rewards + one smoothness term)
+
+Set in `unitree_go2_pgtt_repro_env_cfg` (`cfg.rewards = {...}`) and
+`unitree_go2_pgtt_repro_smooth_env_cfg`. Most functions are in
+`mjlab/tasks/velocity/mdp/rewards.py`; `is_terminated`, `action_rate_l2` and
+`action_acc_l2` are in `mjlab/envs/mdp/rewards.py`.
+
+| Term | Weight | Value (per step, before × weight × dt) | What it asks for | A good gait pays /s |
+|---|---|---|---|---|
+| `track_lin_vel` | +1.0 | `exp(-‖v_cmd,xy − v_xy‖² / 0.25)`, body frame | walk at the commanded speed and direction | ~0.95 |
+| `track_ang_vel` | +0.5 | `exp(-(ω_cmd,z − ω_z)² / 0.25)` | turn at the commanded rate | ~0.49 |
+| `foot_phase` | +1.0 | `exp(-Σ_feet (h_target − h)² / 0.05)`, h = foot height below the IMU in the body frame; target −0.30 m in stance, rising smoothly to −0.20 m (+ terrain step, ≤ 0.15 m) at mid-swing | lift each foot on the clock, ~10 cm, and keep the body at walking height | ~0.9-1.0 |
+| `swing_contact` | −0.25 | number of feet on the ground while their clock says swing | actually lift the swing feet | small |
+| `lin_vel_z` | −2.0 | v_z² | no bouncing | small |
+| `ang_vel_xy` | −0.05 | ω_x² + ω_y² | no rolling or pitching | small |
+| `default_pose` | −0.5 | Σ_hips (q − q_default)² (thigh and knee weight 0) | don't splay the legs sideways | small |
+| `torques` | −2e-6 | ‖τ‖₂ + ‖τ‖₁ | don't waste torque | ~0.001 |
+| `action_rate` | −0.001 | Σ (a_t − a_t−1)² | smooth actions (PGTT's, weak) | ~0.002 |
+| `action_acc` | −0.02 | Σ (a_t − 2a_t−1 + a_t−2)² | **no tremor**: costs a 12 Hz shake ~900× more than a 2 Hz step (rung 0b; repro0 doesn't have it) | ~0.06 on repro0's tremor |
+| `termination` | −1.0 | 1 on the step an episode ends early | don't fall (−0.02 per fall; the real cost is the lost future reward) | 0 |
+| `hacking_monitor` | (always 0) | logs `Metrics/hack/*` | nothing, only measures | 0 |
+
+Measured on repro0 (rung 0) at iteration 2500: 2.456 of the possible 2.5 per second, and
+all penalties together 0.03 per second.
+
+### Rung 0 (`repro0`) and rung 0b (`smooth0b`): the base
+
+The official PGTT flat-ground setup, ported to mjlab (section 2 of
+[Why four runs failed](#why-four-runs-failed)).
+
+| Part | Setting |
+|---|---|
+| Ground | flat plane |
+| Collisions | **feet only** (PGTT's `scene_mjx_feetonly.xml`): the body and legs pass through the ground |
+| Delays | none: actions and sensors are instant |
+| Commands | each of vx, vy, ωz uniform in [−1, 1], non-zero with probability 0.9 / 0.25 / 0.5 (so mostly forward, sometimes sideways or turning); new command every 2-8 s |
+| Gait frequency | 1-3 Hz |
+| Sensor noise | joint position ±0.03, joint velocity ±1.5, angular velocity ±0.2, gravity ±0.05 |
+| Reset | anywhere in ±0.5 m, any yaw, body level, almost still (±0.1 m/s), joints at the default pose |
+| Randomization | friction 0.4-1.0, base mass ±1 kg, base CoM ±5 cm, link mass ×0.9-1.1, Kp ×0.9-1.1, armature ×1.0-1.05, joint damping ×0.9-1.1 |
+| Pushes | none |
+| Rewards | the table above (0b adds `action_acc`) |
+| Iterations | 3000 (repro0), 1500 (0b) |
+
+- **Result 0:** walks, 95% of commanded speed, no falls, but with a 12 Hz tremor on top of
+  the gait.
+- **Result 0b:** walks in the viewer; tremor numbers still to be measured.
+
+### Rung 1 (`rung1_collisions`): the whole body can touch the ground
+
+- **Changes:** the robot's collisions go from feet-only to the full model, so trunk, hips,
+  thighs and calves collide with the ground. A new termination, `body_contact`, ends the
+  episode when the trunk or a hip touches the terrain.
+- **Why:** the real robot has a body. A feet-only robot can't kneel, lie down or hit a step
+  with its shin, so no policy trained on it learns to avoid that. The termination is the
+  v1 fix (lying on the belly and paddling).
+- **Rewards:** unchanged.
+- **Risk:** falls now end episodes much more often (any body contact, not only a flip).
+  Thighs and calves can touch without ending anything, so kneeling is possible and still
+  costs nothing (rung 5 adds that cost).
+- **Watch:** `Episode_Termination/body_contact`, `Metrics/hack/leg_ground_frac`,
+  `body_ground_frac`.
+
+### Rung 2 (`rung2_delays`): late motors and sensors
+
+- **Changes:**
+  - Each episode, the motor command arrives 0-20 ms late (0-4 physics steps; the actuator
+    becomes a `DelayedActuatorCfg`, event `actuator_delay`).
+  - Angular velocity, gravity, joint positions and velocities can be up to 1 policy step
+    (20 ms) old.
+  - The student's height map can be up to 3 steps (60 ms) old. The teacher doesn't see it.
+- **Why:** on the real Go2, commands and readings travel over DDS. A policy that only works
+  with instant feedback shakes or falls on the robot.
+- **Rewards:** unchanged.
+- **Risk:** delays make high-gain reactions unstable, which can bring the tremor back.
+- **Watch:** `action_tremor`, `action_jitter`, falls.
+
+### Rung 3 (`rung3_pushes`): shoves and forces
+
+- **Changes:**
+  - `push_robot`: every 4-8 s the base's velocity is suddenly changed by up to ±0.5 m/s in
+    x and y.
+  - `external_wrench`: every 3-6 s a force of up to ±15 N and a torque of up to ±2 Nm act on
+    the base. The teacher sees this force in its privileged observations.
+- **Why:** the robot must recover from bumps, and the student learns to estimate them from
+  the teacher's reactions.
+- **Rewards:** unchanged.
+- **Risk:** falls after pushes; tracking drops briefly after each push.
+- **Watch:** falls, speed ratio.
+
+### Rung 4 (`rung4_randomization`): our wider randomization
+
+- **Changes:** all of the teacher's randomization events, wider than PGTT's:
+
+  | Event | Rung 0-3 (PGTT) | Rung 4+ (ours) |
+  |---|---|---|
+  | foot/body friction | 0.4-1.0 | 0.3-1.2 |
+  | base mass | ±1 kg | −1 to +2 kg |
+  | Kp / Kd | ×0.9-1.1 / ×1.0 | ×0.85-1.15 / ×0.8-1.2 |
+  | armature | ×1.0-1.05 | ×0.8-1.2 |
+  | motor strength (effort limit) | 100% | 85-100% |
+  | joint friction | 0 | 0-0.2 Nm |
+  | encoder bias | 0 | ±0.015 rad per joint |
+  | reset pose | flat, joints at default | tilted ±0.1 rad, joints ±0.1 rad |
+  | reset velocity | ±0.1 m/s | ±0.3 m/s, ±0.3 rad/s yaw |
+
+  Base CoM, link mass and joint damping randomization stay as before.
+- **Why:** the real robot's friction, battery, motors and sensors differ from the model.
+  A policy that works across these ranges is more likely to work on the real one.
+- **Rewards:** unchanged.
+- **Risk:** the hardest cases (low friction, weak motors) may cause slipping and falls.
+- **Watch:** falls, slip (`eval_gait.py`), speed ratio.
+
+### Rung 5 (`rung5_rewards`): penalties for what full collisions make possible
+
+- **Changes:** three reward terms from the teacher config, at its weights, **with no ramp**
+  (full weight from iteration 0):
+
+  | Term | Weight | Value | What it stops | Cost /s |
+  |---|---|---|---|---|
+  | `base_height` | −50 | (0.25 − h)² when the base is lower than 0.25 m above the ground under it, else 0 | crouching or crawling | 0 at walking height (~0.28 m); −0.125 at 0.20 m, −0.5 at 0.15 m |
+  | `leg_contact` | −0.25 | number of thigh/calf collision geoms touching the ground (0-12) | kneeling, dragging a shin, resting a knee on a step | −0.25 per touching geom |
+  | `joint_limits` | −1.0 | how far (rad) the joints are past their soft limits, summed | pressing into the joint stops | 0 inside the limits |
+- **Why:** from rung 1 the robot can kneel and crawl, and on stairs (rung 7) resting a shin
+  on a step edge would be an easy shortcut. These terms make that cost something.
+- **Left out on purpose** (the rest of the old teacher's reward set, which never walked):
+  - doubled tracking weights (2.0 / 1.0);
+  - the −100 termination;
+  - `joint_power` and `joint_torques`;
+  - `action_rate` at −0.01;
+  - `orientation`;
+  - the penalty ramps (they only delayed v2's failure).
+- **Risk:** `base_height` uses the height scan; on rough ground a wrong reading could
+  punish normal walking. On flat ground it should be 0 for a good gait.
+- **Watch:** `Episode_Reward/base_height` and `Episode_Reward/leg_contact` (should be ~0
+  once it walks), speed ratio (should not drop).
+- **Result (1 Nov):** HACK, falls about once a second. The cause is in rung 4; see
+  [Rungs 4 and 5 collapse](#rungs-4-and-5-collapse-1-nov).
+
+### Rung 6 (`rung6_commands`): harder commands
+
+- **Changes:** the teacher's command settings.
+
+  | | Rung 0-5 (PGTT) | Rung 6+ |
+  |---|---|---|
+  | which axes move | x with probability 0.9, y 0.25, turn 0.5 | all three every time, each uniform in [−1, 1] |
+  | standing still | ~4% (all three axes 0) | 5% of robots told to stand |
+  | new command every | 2-8 s | 8-12 s |
+
+  In both, a command whose total size is below 0.1 is set to 0 (stand).
+- **Why:** the deployed robot gets any joystick combination, including standing still.
+- **Rewards:** unchanged.
+- **Risk:** combined diagonal-and-turning commands are harder, so tracking may drop.
+- **Watch:** speed ratio, `standing_drift`, `eval_gait.py`'s diagonal and stand rows.
+
+### Rung 7 (`rung7_terrain`): stairs and rough ground, the full teacher
+
+- **Changes:**
+  - The flat plane becomes a 10 × 20 grid of 8 m × 8 m patches:
+    - 20% flat;
+    - 50% stairs (up and down, steps 30 or 40 cm deep and 1-13 cm high);
+    - 10% random rough ground (up to 5 cm);
+    - 15% slopes (up to 0.25);
+    - 5% waves.
+  - The terrain curriculum (`terrain_levels_vel`) starts robots on the easier rows (level
+    ≤ 3).
+    - A robot that walked more than 4 m in an episode moves up a row (higher steps).
+    - One that walked less than half of its commanded distance moves down.
+  - Trains 6000 iterations instead of 1500.
+- **Why:** the target task is stairs (PGTT) on a robot that also has to cross everything
+  else.
+- **Rewards:** unchanged, but `foot_phase` now matters more: its swing target rises with
+  the terrain step under the foot (up to +15 cm). `base_height` and `leg_contact` now
+  measure against real steps.
+- **What rung 7 still doesn't have, compared with the old teacher task:**
+  - the left-out reward terms (rung 5);
+  - PGTT's joint damping and joint-position noise are kept instead of ours;
+  - PGTT's PPO settings are kept.
+
+  All of these are deliberate.
+- **Risk:** hitting step edges with the shins, refusing to climb (low speed ratio on
+  stairs), or the curriculum stalling at low rows.
+- **Watch:** `Curriculum/terrain_levels` (should rise), speed ratio (≥ 0.65 on stairs),
+  `leg_ground_frac`, falls. In the viewer: `--terrain stairs`.
+
+### How each rung is judged
+
+| | Automatic, by `train_ladder.sh` | By hand, before trusting the rung |
+|---|---|---|
+| Check | hacks check on the last checkpoint, written to `hacking_check.txt` | the same check plus `eval_gait.py`, compared with the rung before at the same iteration |
+| Fails when | any HACK (the chain stops) | speed ratio < 0.9 (rung 7: < 0.65 on stairs), falls ≥ 0.2/min, saturation ≥ 0.05, tremor ≥ 0.15, swings/s more than 5% off the clock, or a clear regression against the rung before |
+| WARN | counts as a pass, the chain continues | read which metric warned and whether it is new in this rung |
+
+### Status (1 Nov)
+
+| Rung | Status |
+|---|---|
+| 1 collisions | finished, **WARN**: tremor 0.118; leg contact 0.001, base 0.285 m, 0 falls |
+| 2 delays | finished, **WARN**: tremor 0.115; leg contact 0.099, base 0.282 m, 0 falls |
+| 3 pushes | finished, **WARN**: leg contact **0.248**, tremor 0.119; base 0.277 m, 0 falls |
+| 4 randomization | stopped by Ctrl+C at ~1200. The check says **WARN**, but training was collapsing: see [Rungs 4 and 5 collapse](#rungs-4-and-5-collapse-1-nov) |
+| 5 rewards | finished, **HACK**: 58 falls per robot-minute, speed ratio 0.03; the chain stopped. Same collapse as rung 4, faster |
+| 6-7 | not run |
+| 4 again (`rung4_term100`) | finished, **HACK**: kneels in place. `leg_ground_frac` **0.645**, speed ratio **0.005**, base 0.249 m, falls 5.6/min (fell_over 27, body_contact 10) |
+
+**Seen in the viewer (rungs 1-4):**
+- In rungs 1-3 the hind legs kneel slightly at low commanded speeds, sometimes with the body
+  tilted backwards.
+- Rung 4 at iteration 1200 kneels outright.
+
+**Why more training won't fix it:**
+- From rung 1 on, a thigh or calf can rest on the ground. Nothing in rungs 1-4 charges for
+  that: only the trunk or a hip ends an episode, and `leg_contact` and `base_height` only
+  come in rung 5.
+- A slight tilt is almost free too. `foot_phase` measures the feet relative to the body,
+  with a loose σ (0.05 m² on the summed error). A 5° pitch moves the rear feet by about
+  1.7 cm against the front ones and costs about 0.02 of the 2.5 per second.
+- At low speed, tracking is easy whatever the posture, so resting on the knees saves effort
+  at no cost.
+- Rung 4's weaker motors (85-100% strength, Kp down to ×0.85) and up to +2 kg of mass make
+  resting even more attractive.
+- As with repro0's tremor, this is a flaw the objective doesn't measure, so more iterations
+  of the same rung can't remove it.
+
+**What should fix it:**
+- Rung 5 adds `leg_contact` (−0.25 per touching geom, so kneeling on both hind calves costs
+  ~0.5/s) and `base_height`, on top of everything from rungs 1-4. It is the test.
+- If rung 5 still tilts backwards without touching, the posture needs its own term.
+  `orientation` at the teacher's −0.2 is too weak: a 5° tilt costs 0.0015/s. It would need
+  about −5, where 5° costs ~0.04/s.
+- **Result:** rung 5 did not get to test this. Training collapsed before the posture
+  mattered (next section).
+
+**What the checks say** (rungs 1-3; the check runs without pushes or randomization):
+- Every WARN includes `action_tremor` at 0.115-0.119. The WARN threshold is 0.1, but the
+  0b pass criterion is 0.15 and repro0 had 0.37. So the smoothness term still works, and
+  this WARN is not a problem.
+- The share of time with a thigh or calf on the ground (`leg_ground_frac`) grows rung by
+  rung: 0.001 → 0.099 → 0.248. Body height drops slightly with it: 0.285 → 0.282 → 0.277 m.
+  Each new difficulty (delays, then pushes) makes resting on a leg more useful, and nothing
+  charges for it. In rung 3 it happens even in the check, which has no pushes, so it is a
+  learned habit, not a reaction to a shove.
+
+**Ladder lesson:** a change that opens a new shortcut (full collisions → kneeling) should
+come in the same rung as the term that closes it. Rung 1 and rung 5 should have been one rung.
+
+### Rungs 4 and 5 collapse (1 Nov)
+
+**In short:** both rungs learned to walk within 100-200 iterations, then got worse until the
+robots fell about once a second. It starts in rung 4 (randomization): more and more robots
+hit the ground with the trunk or a hip, a fall costs almost nothing, and once the reward
+drops, PPO's entropy bonus makes the actions noisier, which causes more falls. Rung 5's
+penalties only make it faster.
+
+#### What the hack check said on rung 5 (`model_1499.pt`)
+
+| Metric | Value | Verdict |
+|---|---|---|
+| `falls_per_min` | **58** (fell_over 209, body_contact 173 in 32 robots × 10 s) | HACK |
+| `speed_ratio` | **0.03** | HACK |
+| `standing_drift` | 0.39 m/s | HACK |
+| `action_tremor` | 0.52 | HACK |
+| `leg_ground_frac` | 0.15 | WARN |
+| `base_height` | 0.287 m | OK |
+
+Reward per second:
+- Positive: 1.21 (foot_phase 0.75, track_lin_vel 0.30, track_ang_vel 0.15).
+- Penalties: 1.71 (ang_vel_xy −0.69, lin_vel_z −0.54, then default_pose, swing_contact and
+  action_acc ~−0.13 each).
+
+The robot shakes and tumbles, ignores the command, and still earns foot_phase.
+
+#### First guess, wrong: the zero clip
+
+The guess: rung 5's penalties pushed most steps' sum below 0 from the start, so the clip
+paid 0 everywhere and nothing could be learned.
+
+The training curves disprove it. `Train/mean_reward` is the reward summed over an episode;
+`Train/mean_episode_length` is in steps (1000 = the 20 s maximum).
+
+| Iteration | Rung 4 reward | Rung 4 episode length | Rung 5 reward | Rung 5 episode length |
+|---|---|---|---|---|
+| 0 | 0.05 | 11 | 0.05 | 11 |
+| 100 | 24.2 | 794 | 23.2 | 766 |
+| 200 | **28.9** | 811 | 21.0 | 647 |
+| 400 | 22.2 | 663 | 17.6 | 641 |
+| 800 | 17.0 | 739 | 0.72 | 141 |
+| 1199 | 1.6 | 173 | 0.06 | 53 |
+| 1499 | — (stopped) | — | 0.07 | 50 |
+
+Both learned to walk first (about 1.8/s at their best), so the clip did not block learning.
+They collapsed later. Rung 4 collapses too, more slowly.
+
+#### What the logs show
+
+How to read the TensorBoard values below:
+- `Episode_Reward/<term>` is the term's episode total divided by the 20 s maximum, so it
+  also drops when episodes get shorter.
+- `Episode_Termination/<cause>` is how many of the 4096 robots ended that way per policy
+  step.
+
+| | Rung 3 (healthy) | Rung 4 | Rung 5 |
+|---|---|---|---|
+| `body_contact` endings (it 100 → 400 → 800 → 1199 → 1499) | 0.65 → 0.3 → 0.5 → 0.1 → **0** | 1.25 → 2.55 → 3 → **18.4** → — | 1.1 → 3.85 → 24.3 → 61.1 → **69.8** |
+| `fell_over` endings | ≤ 0.15, then 0 | ≤ 0.15, then 0 | ≤ 0.25 |
+| `Policy/mean_noise_std` (it 400 → end) | 0.229 → 0.215, still falling | 0.287 → **0.387**, rising from ~600 | 0.284 → **0.575** (0.49 at 1499) |
+| `Loss/entropy` (end) | −6.1 | −0.5 (from −4.2) | +3.5 (peak +5.7) |
+| `Loss/value_function` | 0.0009, falling | 0.0013, falling | 2e-6 (rewards ~0, nothing to predict) |
+| `Episode_Reward/foot_phase` (it 200 → end) | 0.87 → 0.96 | 0.77 → **0.06** | 0.57 → **0.02** |
+| `Episode_Reward/track_lin_vel` (it 200 → end) | 0.82 → 0.93 | 0.66 → 0.08 | 0.51 → 0.02 |
+
+What this rules in and out:
+
+1. **The critic is fine.** Its loss keeps falling in rung 4, so it is not the cause.
+2. **Falls start it.**
+   - In rung 4, `body_contact` endings rise from iteration ~200.
+   - The gait gets worse even per second alive: foot_phase ÷ (episode length / 1000) goes
+     0.95 (it 200) → 0.86 (400) → 0.79 (600) → 0.57 (1000) → 0.37 (1199).
+   - Meanwhile the noise std is still shrinking (0.294 → 0.287).
+3. **The growing noise comes second and makes it worse.**
+   - From ~600 the std turns up, entropy rises and the actions get noisier.
+   - Noisier actions mean more falls, less reward, and an even larger entropy bonus relative
+     to the reward.
+   - In rung 3 the std falls all the way to 0.22.
+
+#### Why rung 4 falls more and more
+
+- **A fall costs almost nothing.** `termination` is −1 × dt = **−0.02 per fall** (added after
+  the clip, like PGTT's −1 inside it). The rest of the cost is the future reward the robot
+  loses.
+- **Some robots lose little when they fall.** Rung 4 makes some robots heavy (+2 kg), with
+  weak motors (85%, Kp ×0.85), on slippery ground (friction 0.3). They earn little even
+  standing up, so the policy gains little from keeping them up. Rung 4 also kneels outright
+  in the viewer, and from kneeling a hip is close to the ground.
+- **The entropy bonus wins once the reward shrinks.** The bonus (0.01) is the same every
+  iteration, while the reward that pushes against it shrinks. So the std grows, which is
+  the feedback loop above.
+- **Rung 5 is the same, faster.** Its penalties (`leg_contact`, `base_height`) take away
+  reward from robots that kneel or sag, which are the same robots that fall.
+
+#### Why the hack check only said WARN for rung 4
+
+`check_reward_hacking.py` runs the policy **without** randomization (nominal robot, no pushes).
+A policy that only falls apart on heavy, weak or slippery robots looks fine there. When the
+check and the training curves disagree, believe the curves. The check should also run once
+with the training randomization.
+
+#### What we try next
+
+1. **Make falling cost something** (testing now).
+   - Rerun rung 4 with `termination` −100, the teacher's value, which is −2 per fall instead
+     of −0.02.
+   - This is safe with the zero clip: every step pays ≥ 0, so dying can never pay more than
+     staying alive. That rules out run 2's "fall on purpose" hack.
+   - Command line: `--env.rewards.termination.weight=-100 --agent.run-name rung4_term100`.
+   - It works if, at 800 iterations, `body_contact` stays near 0 and the noise std keeps
+     falling, as in rung 3.
+   - **Result (2 Nov): HACK, worse.** Hack check on `model_1499.pt`:
+     - The robot kneels on its legs 65% of the time (`leg_ground_frac` 0.645, base 0.249 m).
+     - It does not walk (speed ratio 0.005) and still earns foot_phase (0.88/s, 55% of
+       the positive reward).
+     - Falls drop from rung 5's 58/min to 5.6/min, but they are not zero.
+     - Why: falling now costs 2, but kneeling still costs nothing in rung 4 (no
+       `leg_contact`), so the safest way to keep the reward is to kneel and stay put. This
+       is the ladder lesson again: pricing the fall without pricing the kneel moves the
+       robot into the kneel.
+2. **If it still collapses:** a smaller entropy bonus, `--agent.algorithm.entropy-coef=0.001`.
+3. **When it works:** put the fix into the rungs, rerun rung 5, then continue the chain.
+
+#### The diagnosis batch (`scripts/diagnose_collapse.sh`, 2 Nov)
+
+Four 1500-iteration runs, back to back. Each answers one question:
+
+| # | Run | Setup | Question |
+|---|---|---|---|
+| 1 | `r5_term100` | rung 5 + `termination` −100 | Does pricing the fall (−2) **and** the kneel (`leg_contact`) together fix it? The candidate fix. |
+| 2 | `r4_ent001` | rung 4 + entropy bonus 0.001 (from 0.01) | With cheap falls, is the entropy bonus the root cause? |
+| 3 | `r5_term100_ent001` | run 1 + entropy 0.001 | Do we need both? |
+| 4 | `r6_term100` | rung 6 + `termination` −100 | Does the fix survive the teacher's commands (the last step before terrain)? |
+
+**A run passes** (fixed before the results):
+- Hack check: no HACK, speed ratio ≥ 0.8, falls < 0.2/min, `leg_ground_frac` < 0.1.
+- Curves look like rung 3's:
+  - episode length stays above 900 after its peak;
+  - noise std keeps falling (no turn upwards after iteration ~600);
+  - `body_contact` endings fall towards 0.
+
+**What each outcome means:**
+
+| Result | Then |
+|---|---|
+| 1 passes | The fix is `termination` −100 on rungs 5+. If 4 also passes, train the full teacher (rung 7) for 10000 iterations with it. |
+| 1 fails but 3 passes | Both changes are needed. Rung 4 never ran with them, so the full teacher run's first ~800 iterations are its test (watch the curves). |
+| 2 passes | The entropy bonus was the root cause: Brax's 0.01 is too large for our setup. |
+| 2 fails | Cheap falls plus wide randomization collapse even without the bonus. |
+| 1, 3 fail | Rung 4's randomization itself is the problem. Next: split rung 4's events to find which one. |
+| 1 passes, 4 fails | The teacher's commands break it. Rung 6 needs its own fix before the full run. |
+
 ## Lessons
 
 1. **Check the ordering of behaviours, not single weights.** Score scripted behaviours (stand,
@@ -540,6 +1008,14 @@ numbers (tremor, share of action power above 6 Hz) are not measured yet; the lad
 12. **Penalise what you want gone, at the frequency where it lives.** The second difference
     of the action separates a 12 Hz tremor from a 2 Hz gait about 900× per unit size; the first
     difference only 30×. Measure the spectrum before choosing the term.
+13. **A run that learns and then gets worse: find what moved first.** Rungs 4 and 5 walked by
+    iteration 200 and collapsed later. A rising noise std was visible, but the falls started
+    before it; the std only amplified them. Print the curves side by side with a healthy run.
+14. **If falling is nearly free, robots that earn little will be dropped.** −0.02 per fall is
+    noise. With wide randomization some robots earn little upright, so losing them costs
+    the policy little, and the falls spread.
+15. **A check without randomization can't see a collapse under randomization.** Rung 4's
+    check said WARN while its training episodes had shrunk from 811 to 173 steps.
 
 ## What to watch in a rung run (repro0, 0b, ...)
 
@@ -547,6 +1023,8 @@ numbers (tremor, share of action power above 6 Hz) are not measured yet; the lad
 |---|---|---|---|
 | iteration ~300 | `Train/mean_episode_length` | climbing towards 1000 | stuck low |
 | throughout | `Policy/mean_noise_std` | falls below 0.7 | rises (the entropy problem is back) |
+| throughout | `Episode_Termination/body_contact` | falls towards 0 (rung 3) | rises after the first ~200 iterations (rungs 4-5) |
+| throughout | `Train/mean_episode_length` after its peak | stays near 1000 | falls again (rung 4: 811 → 173) |
 | throughout | `Metrics/hack/action_saturation` | below 0.2 | above 0.5 (bang-bang) |
 | throughout | `Metrics/hack/action_jitter` | 0.05-0.3 | above 0.8 |
 | from ~1000 | `Metrics/hack/speed_ratio` | rising towards 1 | near 0 |

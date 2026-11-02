@@ -189,6 +189,25 @@ A different random seed (same task, to check a result wasn't luck): add `--agent
 The run folder is printed near the start, on the line
 `[INFO] Logging experiment in directory: ...`.
 
+### 4c. The collapse diagnosis (four runs back to back, ~6 h)
+
+```bash
+tmux new -s diag
+cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && source .venv/bin/activate && git pull
+bash scripts/diagnose_collapse.sh
+```
+- Runs `r5_term100`, `r4_ent001`, `r5_term100_ent001` and `r6_term100` (1500 iterations
+  each) and checks each one. It does **not** stop at a HACK.
+- At the end it prints one table comparing them with rungs 3-5. It also saves the table to
+  `logs/rsl_rl/go2_pgtt_repro/diagnosis.txt`; read it later with
+  `cat logs/rsl_rl/go2_pgtt_repro/diagnosis.txt`.
+- **Start from a later experiment** (after a crash or a stop): `bash scripts/diagnose_collapse.sh <N>`,
+  where `<N>` is 1-4 in the order above.
+- **The table again at any time**, for any runs:
+  `python scripts/summarize_runs.py <RUN_NAME> <RUN_NAME> ...`
+- What each run tests and how to read the result: `doc/reward_hacking_runs_1-3.md`,
+  "Rungs 4 and 5 collapse".
+
 ---
 
 ## 5. Is it running? How far is it?
