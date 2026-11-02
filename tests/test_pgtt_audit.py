@@ -103,6 +103,24 @@ class AuditRegressionTests(unittest.TestCase):
     policy.entropy.sum().backward()
     self.assertAlmostEqual(mu.grad.mean().item(), -1.94, delta=0.05)
 
+  def test_effort_limits_do_not_compound_over_resets(self):
+    # Rung 4's effort_limits event (x0.85-1.0, every reset) used to scale the current
+    # limit, so the motors weakened with each reset (~11% after 30) and rung 4 collapsed.
+    from mjlab.envs import ManagerBasedRlEnv
+    from mjlab.tasks.velocity.config.go2.env_cfgs import unitree_go2_pgtt_rung_env_cfg
+
+    cfg = unitree_go2_pgtt_rung_env_cfg(4)
+    cfg.scene.num_envs = 2
+    env = ManagerBasedRlEnv(cfg=cfg, device="cpu")
+    try:
+      for _ in range(20):
+        env.reset(env_ids=torch.arange(2))
+      upper = env.sim.model.actuator_forcerange[:, :, 1]
+      self.assertGreaterEqual(upper.min().item(), 0.85 * 23.5 - 1e-3)
+      self.assertLessEqual(upper.max().item(), 23.5 + 1e-3)
+    finally:
+      env.close()
+
 
 if __name__ == "__main__":
   unittest.main()

@@ -640,7 +640,7 @@ def randomize_effort_limits(
     effort_limit_range: (min, max) for effort limit randomization.
     asset_cfg: Asset configuration specifying which entity and actuators.
     distribution: Distribution type ("uniform" or "log_uniform").
-    operation: "scale" multiplies existing limits, "abs" sets absolute values.
+    operation: "scale" multiplies the default limits, "abs" sets absolute values.
   """
   from mjlab.actuator import (
     BuiltinPositionActuator,
@@ -684,11 +684,15 @@ def randomize_effort_limits(
 
     if isinstance(actuator, (BuiltinPositionActuator, XmlPositionActuator)):
       if operation == "scale":
-        env.sim.model.actuator_forcerange[env_ids[:, None], ctrl_ids, 0] *= (
-          effort_samples
+        # Scale the stored defaults, not the current values: this event runs at every
+        # reset, and `*=` compounded (x0.85-1.0 per reset, ~11% of the torque after 30
+        # resets), which made rung 4's motors weaker and weaker over training.
+        default_forcerange = env.sim.get_default_field("actuator_forcerange")
+        env.sim.model.actuator_forcerange[env_ids[:, None], ctrl_ids, 0] = (
+          default_forcerange[ctrl_ids, 0] * effort_samples
         )
-        env.sim.model.actuator_forcerange[env_ids[:, None], ctrl_ids, 1] *= (
-          effort_samples
+        env.sim.model.actuator_forcerange[env_ids[:, None], ctrl_ids, 1] = (
+          default_forcerange[ctrl_ids, 1] * effort_samples
         )
       elif operation == "abs":
         env.sim.model.actuator_forcerange[
@@ -701,8 +705,9 @@ def randomize_effort_limits(
     elif isinstance(actuator, IdealPdActuator):
       assert actuator.force_limit is not None
       if operation == "scale":
-        current_limit = actuator.force_limit[env_ids].clone()
-        actuator.set_effort_limit(env_ids, effort_limit=current_limit * effort_samples)
+        assert actuator.default_force_limit is not None
+        default_limit = actuator.default_force_limit[env_ids]  # not the current one (see above)
+        actuator.set_effort_limit(env_ids, effort_limit=default_limit * effort_samples)
       elif operation == "abs":
         actuator.set_effort_limit(env_ids, effort_limit=effort_samples)
 
