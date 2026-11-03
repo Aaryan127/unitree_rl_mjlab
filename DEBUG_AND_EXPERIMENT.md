@@ -4,13 +4,13 @@ Everything here runs from the repo root with the venv active:
 
 ```bash
 cd ~/unitree_rl_mjlab && source .venv/bin/activate
-T=Mjlab-Velocity-PGTT-Rung7-Unitree-Go2        # stage 1: teacher (PPO), the top of the ladder
+T=Mjlab-Velocity-PGTT-Rung9-Unitree-Go2        # stage 1: teacher (PPO), the top of the ladder
 S=Mjlab-Velocity-PGTT-Student-Unitree-Go2      # stage 2: student (distillation)
 ```
 
 **Which teacher task.**
 - The teacher is now trained through the ladder: `Mjlab-Velocity-PGTT-Repro-Unitree-Go2`,
-  `...-Repro-Smooth-...`, then `...-Rung1-...` to `...-Rung7-...` (experiment `go2_pgtt_repro`).
+  `...-Repro-Smooth-...`, then `...-Rung1-...` to `...-Rung9-...` (experiment `go2_pgtt_repro`).
   Set `T` to the rung you work on, e.g. `T=Mjlab-Velocity-PGTT-Rung4-Unitree-Go2`.
 - The old `Mjlab-Velocity-PGTT-Teacher-Unitree-Go2` (`go2_pgtt_teacher`) never walked (runs
   v1-v4, doc/experiments.md).
@@ -257,16 +257,17 @@ Current groups (`scripts/pgtt.sh config` shows them):
 | `proprio_history` | teacher | joint_pos/joint_vel/action history |
 | `height` | teacher (clean ray-cast map) | height_scan |
 | `height_noisy` | student (LiDAR-built map) | height_scan |
-| `privileged` | teacher only (sim-only truth) | base_lin_vel, foot_contact, foot_contact_forces, foot_contact_normals, foot_friction, leg_ground_contact, base_external_wrench |
+| `privileged` | teacher only (sim-only truth) | base_lin_vel, foot_contact, foot_contact_forces, foot_contact_normals, foot_friction, leg_ground_contact, base_external_wrench; from rung 8 also `dynamics` (90 randomized values, `mdp.robot_dynamics`) |
 | `critic` | value function only | proprio + base_lin_vel |
 
 Sensors: `feet_ground_contact`, `feet_ground_normals`, `leg_ground_contact`,
 `height_scanner`, `lidar`.
 
-**In the ladder tasks (Repro, Rung1-7), `height_noisy` and `lidar` don't exist.** The teacher
+**In the ladder tasks (Repro, Rung1-9), `height_noisy` and `lidar` don't exist.** The teacher
 never reads them, and on stairs the LiDAR's rays cost ~75% of the step time
 (doc/experiments.md, "Rung 7"). They exist in the old Teacher task and in the Student task.
-The rungs also end an episode on NaN physics (`nan_state`).
+The rungs also end an episode on NaN physics (`nan_state`) and on blown-up physics
+(`physics_exploded`: a joint > 100 rad/s or the base > 20 m/s).
 
 **Drop privileged info** (does the teacher need it?):
 ```bash
@@ -321,8 +322,9 @@ MJLAB_DROP=event:actuator_delay,event:pd_gains ...          # no motor randomiza
 Event names: `reset_base`, `reset_robot_joints`, `push_robot`, `external_wrench`,
 `body_friction`, `base_mass`, `base_com`, `pd_gains`, `effort_limits`, `actuator_delay`,
 `link_mass`, `joint_friction`, `joint_armature`, `encoder_bias`.
-Termination names: `time_out`, `fell_over`, `nan_state` (NaN/Inf physics, every rung), and
-from rung 1 on `body_contact` (trunk or a hip on the ground).
+Termination names: `time_out`, `fell_over`, `nan_state` (NaN/Inf physics, every rung),
+`physics_exploded` (finite but blown-up physics, every rung), and from rung 1 on `body_contact`
+(trunk or a hip on the ground).
 
 `effort_limits` (and `pd_gains`) now scale the default values at each reset. Before 2 Nov,
 `effort_limits` multiplied the current limit, so the motors faded with every reset.

@@ -832,6 +832,7 @@ It asks for the password once per run. Runs that don't exist yet print an error;
 | a run is much slower than ~7 s per iteration | something else uses the GPU or CPU: `nvidia-smi`, `top` (press `q` to leave) |
 | terrain (rung 7) much slower than flat | ray casts cost the most on terrain (every ray is tested against every terrain box). Before 3 Nov the rungs also computed the student's LiDAR: `git pull` |
 | `Assertion ... expects all elements of std >= 0.0 failed` / `CUDA error: device-side assert triggered` | the policy's noise std became NaN: a robot's physics blew up and poisoned the update. Since 3 Nov the rungs reset such robots (`Episode_Termination/nan_state` counts them): `git pull` and start the run again |
+| `Episode_Reward/...` values in the millions or more (e.g. `default_pose: -19595920408576`), `speed_ratio` far outside 0-1 | some robots' physics blew up without turning NaN. Since 4 Nov (`18e7e21`) the rungs reset them (`Episode_Termination/physics_exploded` counts them). A run started before that is poisoned (the teacher's input normalizer kept the outliers): stop it, `git pull`, start again |
 | `EOFError: Ran out of input` when loading a checkpoint | the file is empty, cut off by a crash. Use the newest non-empty one: `find $RUN -name 'model_*.pt' -size +0 \| sort -V \| tail -1` |
 | **rebooted** during a training | see below |
 

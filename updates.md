@@ -22,19 +22,43 @@ Every training run, change and result (the experiment log):
 - [x] Reward-hacking checks: `hacking_monitor` metrics in TensorBoard, `scripts/check_reward_hacking.py`,
       `scripts/eval_gait.py`
 - [x] Official PGTT setup reproduced on our Go2 (`repro0`): walks, 95% of the commanded speed, no falls
-- [x] Ladder from the reproduction to the full teacher (rungs 1-7, `scripts/train_ladder.sh`):
+- [x] Ladder from the reproduction to the full teacher (rungs 1-9, `scripts/train_ladder.sh`):
       rungs 1-3 walk
 - [x] Rung 4/5 collapse: a bug (motors weakened at every reset), fixed; rungs 4-6 pass
 - [x] Flat-ground teacher: rung 6 (`2026-11-03_02-53-15_rung6_commands`), check WARN
 - [ ] Rung 6 with a second seed (`rung6_seed2`)
-- [ ] Rung 7 (terrain): crashed (NaN, 80 s/iteration); fixes written, to run again
-- [ ] Full teacher training on GPU (rung 7's setup, 10k iterations, 4096 envs)
+- [ ] Rung 7 (terrain): running again with the fixes (9 s/iteration)
+- [x] Rung 8 (privileged dynamics) and rung 9 (hard terrain gradient, boulders): built and tested
+- [ ] Rungs 8 and 9 on GPU (they follow rung 7 automatically)
+- [ ] Full teacher training on GPU (rung 9's setup, 10k iterations, 4096 envs)
+- [ ] Student task with the rung 8+ teacher inputs (`dynamics`), and a per-part reconstruction check
 - [ ] Full student distillation on GPU (check first that the student task loads a rung-7 teacher)
 - [ ] Play both in simulation; check stairs success per terrain level
 - [ ] Build `go2_ctrl` on the robot (needs unitree_sdk2 + cyclonedds; not buildable on the dev laptop)
 - [ ] Real robot: blind test on flat ground first (no height map -> zeros)
 - [x] ROS 2 PointCloud2 bridge: LiDAR points -> robot-centric 11 x 9 grid -> UDP
 - [ ] Confirm LiDAR topic, TF, coverage, and timing on the physical Go2
+
+## 2026-11-04: rung 7 rerun, the explosion guard, rungs 8 and 9
+- Rung 7 rerun with the fixes: **9.26 s per iteration** (was 80 s), so ~15.5 h for 6000. `nan_state` 0.
+  Chirag's run had held the 3070 at first; it caused the two out-of-memory starts.
+- New problem: some robots' physics blew up without turning NaN (hip angles ~10⁶ rad,
+  `default_pose` −2×10¹³ per episode). Fix: a `physics_exploded` termination (a joint faster than
+  100 rad/s or the base faster than 20 m/s) (`18e7e21`).
+- Correction: the teacher's observation normalization is **on** (`RslRlPpoActorCriticWildCfg`
+  defaults it to True). So those robots also poisoned its running statistics. Runs started
+  before `18e7e21` are not usable.
+- Rung 8 "dynamics": the teacher also sees 90 randomized dynamics values (mass, CoM, motor
+  strength, Kp/Kd, armature, damping, joint friction, encoder bias, delay). The privileged
+  group grows from 53 to 143 (`ea62402`).
+- Rung 9 "hard terrain": `PGTT_HARD_TERRAINS_CFG`. Stairs 2 → 18 cm, rough ground scaling with
+  the row 0 → 10 cm (20 cm cells), a new boulders tile 3 → 15 cm, swing cap 21 cm. Same box
+  count as rung 7 (`ea62402`).
+- Research (`doc/research_terrain_and_privileged_state.md`): a trotting Go2 handles 10-15 cm
+  comfortably and 18-20 cm as a stretch; 25-30 cm needs jumping. No paper gives its teacher
+  PD gains or delays, so before distilling, check the student can reconstruct each part.
+- Header guides ("what this file is for, how to change it") in 12 reward, terrain and env
+  files (`8eb379f`).
 
 ## 2026-11-03: rungs 4-6 pass, rung 7 crash fixed
 - With the motor fix the ladder restarted at rung 4:

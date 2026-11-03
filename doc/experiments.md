@@ -5,7 +5,7 @@ Every training run, every change and every result of the PGTT teacher, in order 
 everything here are in [COMMANDS.md](../COMMANDS.md).
 
 **How to read it:**
-- [Where things stand](#where-things-stand-3-nov) and the [changelog](#changelog-every-change-in-order)
+- [Where things stand](#where-things-stand-4-nov) and the [changelog](#changelog-every-change-in-order)
   give the whole story in one page.
 - [All runs](#all-runs) lists every run with its folder and result.
 - The sections after that are the details, roughly in the order things happened:
@@ -15,7 +15,7 @@ everything here are in [COMMANDS.md](../COMMANDS.md).
   4. the rung 4/5 collapse and its diagnosis, the motor bug, the rung 7 crash;
   5. the lessons.
 
-## Where things stand (3 Nov)
+## Where things stand (4 Nov)
 
 - **Flat ground is solved.** Rung 6 (`2026-11-03_02-53-15_rung6_commands`) walks with every
   teacher change except terrain:
@@ -29,19 +29,22 @@ everything here are in [COMMANDS.md](../COMMANDS.md).
   Check: WARN, not HACK.
 - **The rung 4/5 collapse was a bug**, not a learning problem. The motors got weaker at
   every reset. After the fix, rungs 4, 5 and 6 pass.
-- **Rung 7 (terrain) crashed** at iteration 4 with a NaN, running at 80 s per iteration.
-  Three fixes, tested on the CPU, not yet run on the GPU:
-  1. the rungs no longer compute the student-only LiDAR;
-  2. ray casts are cached;
-  3. a robot with NaN physics is reset.
-
-  Stairs step time: 2971 → 239 ms. A pre-flight review then found that the terrain
-  curriculum would barely promote anyone. Fixed with heading commands (`d437833`).
+- **Rung 7 (terrain) is running again** with all fixes, at 9.3 s per iteration (was 80 s):
+  - no student LiDAR in the rungs;
+  - cached ray casts;
+  - heading commands, so the curriculum can promote robots;
+  - resets for robots whose physics turns NaN (`nan_state`) or blows up (`physics_exploded`).
+- **Rungs 8 and 9 are built and tested.** `train_ladder.sh 7` runs them after rung 7:
+  - rung 8: the teacher also sees 90 randomized dynamics values, for sim-to-real;
+  - rung 9: every kind of ground scales from easy to hard by row (stairs 2-18 cm, rough
+    0-10 cm, boulders 3-15 cm), within what a trotting Go2 can climb (research note:
+    [research_terrain_and_privileged_state.md](research_terrain_and_privileged_state.md)).
 - **Next:**
-  1. seed 2 of rung 6 (is rung 6 reliable?);
-  2. rung 7 again (`bash scripts/train_ladder.sh 7`);
-  3. then the 10000-iteration teacher on rung 7's setup (COMMANDS.md 4d), possibly started
-     from rung 6's checkpoint.
+  1. rungs 7 → 8 → 9 (~38 h, `bash scripts/train_ladder.sh 7`);
+  2. the 10000-iteration teacher on rung 9's setup (COMMANDS.md 4d);
+  3. before distilling: build the Student task with the rung's teacher inputs, and check
+     that the student can reconstruct each part of `dynamics`;
+  4. seed 2 of rung 6 when the GPU is free.
 
 ## Changelog: every change, in order
 
@@ -62,9 +65,9 @@ everything here are in [COMMANDS.md](../COMMANDS.md).
 | 2 Nov | Docs: diagnosis results, the bug, inline comments on the reward code; "legs are frictionless" corrected (they grip with μ 1.0) | | `77080bf` | |
 | 3 Nov | `base_height` target 0.25 → **0.265 m**, weight kept at −50 | make a slight sag cost something without starving early learning | `4bb3280` | applies from rung 7 / the teacher on |
 | 3 Nov | Rungs drop the student LiDAR; ray-cast cache; `nan_state` termination; tests | rung 7: 80 s per iteration, NaN crash | `6da5075` | stairs step 2971 → 239 ms on the CPU; GPU run pending |
-| 4 Nov | Rung 8 "dynamics": the teacher also sees 90 randomized dynamics values (`mdp.robot_dynamics`) | sim-to-real: the teacher learns the best response per robot, the student learns to infer it | (this push) | built and tested; trains after rung 7 |
-| 4 Nov | Rung 9 "hard terrain": `PGTT_HARD_TERRAINS_CFG`, stairs 2-18 cm, rough ground scaling 0-10 cm, boulders 3-15 cm, swing cap 21 cm | a gradient from flat to big obstacles, within what a trotting Go2 can climb | (this push) | built and tested; trains after rung 8 |
-| 4 Nov | `physics_exploded` termination: a joint faster than 100 rad/s or the base faster than 20 m/s ends the episode | rung 7 rerun, iteration 6: some robots' physics blew up without turning NaN (hip angles ~10⁶ rad, `default_pose` −2×10¹³ per episode) | (uncommitted) | the exploded robots get reset instead of feeding garbage into the batch |
+| 4 Nov | Rung 8 "dynamics": the teacher also sees 90 randomized dynamics values (`mdp.robot_dynamics`) | sim-to-real: the teacher learns the best response per robot, the student learns to infer it | `ea62402` | built and tested; trains after rung 7 |
+| 4 Nov | Rung 9 "hard terrain": `PGTT_HARD_TERRAINS_CFG`, stairs 2-18 cm, rough ground scaling 0-10 cm, boulders 3-15 cm, swing cap 21 cm | a gradient from flat to big obstacles, within what a trotting Go2 can climb | `ea62402` | built and tested; trains after rung 8 |
+| 4 Nov | `physics_exploded` termination: a joint faster than 100 rad/s or the base faster than 20 m/s ends the episode | rung 7 rerun, iteration 6: some robots' physics blew up without turning NaN (hip angles ~10⁶ rad, `default_pose` −2×10¹³ per episode) | `18e7e21` | the exploded robots get reset instead of feeding garbage into the batch |
 | 3 Nov | Rung 7: heading commands for 80% of the robots (stiffness 0.5) | pre-flight review: with free yaw rates even a perfect walker was promoted by the terrain curriculum in only 52% of episodes | `d437833` | perfect walker promoted 84%, demoted 14% |
 
 ## All runs
@@ -1036,7 +1039,7 @@ Checked against the built rung 7 config, the official PGTT code and the legged_g
 | Fails when | any HACK (the chain stops) | speed ratio < 0.9 (rung 7: < 0.65 on stairs), falls ≥ 0.2/min, saturation ≥ 0.05, tremor ≥ 0.15, swings/s more than 5% off the clock, or a clear regression against the rung before |
 | WARN | counts as a pass, the chain continues | read which metric warned and whether it is new in this rung |
 
-### Status (3 Nov)
+### Status (4 Nov)
 
 | Rung | Status |
 |---|---|
@@ -1045,7 +1048,6 @@ Checked against the built rung 7 config, the official PGTT code and the legged_g
 | 3 pushes | finished, **WARN**: leg contact **0.248**, tremor 0.119; base 0.277 m, 0 falls |
 | 4 randomization | stopped by Ctrl+C at ~1200. The check says **WARN**, but training was collapsing: see [Rungs 4 and 5 collapse](#rungs-4-and-5-collapse-1-nov) |
 | 5 rewards | finished, **HACK**: 58 falls per robot-minute, speed ratio 0.03; the chain stopped. Same collapse as rung 4, faster |
-| 6-7 | not run |
 | 4 again (`rung4_term100`) | finished, **HACK**: kneels in place. `leg_ground_frac` **0.645**, speed ratio **0.005**, base 0.249 m, falls 5.6/min (fell_over 27, body_contact 10) |
 | diagnosis (2 of 4 runs) | both collapse (`r5_term100`, `r4_ent001`): see [The diagnosis batch](#the-diagnosis-batch-scriptsdiagnose_collapsesh-2-nov) |
 | 4 again, with the motor fix (`2026-11-02_23-13-26_rung4_randomization`) | finished, **WARN**: `leg_ground_frac` **0.297** (HACK from 0.3), plus tremor. No collapse. The kneeling trend of rungs 1-3 continues (0.001 → 0.099 → 0.248 → 0.297): rung 4 has no `leg_contact` term, and its weaker motors and heavier trunk make leaning on a leg more useful. Rung 5's term is the fix: rung 5 trains with legs down 0.0005 |
@@ -1053,6 +1055,9 @@ Checked against the built rung 7 config, the official PGTT code and the legged_g
 | 6 commands (`2026-11-03_02-53-15`) | finished, **WARN**: the flat-ground teacher, everything but terrain |
 | 7 terrain (`2026-11-03_05-00-35`) | **crashed at iteration 4**: NaN noise std, and 80 s per iteration. Fixed, to run again: see [Rung 7: the crash and the slowness](#rung-7-the-crash-and-the-slowness-3-nov) |
 | rung 7 again | 3 Nov 16:55: the first attempt with the fixes stopped at once with `Warp CUDA error 2: out of memory`. Most likely a leftover viewer or check still held the 3070 (the same rung 7 had run at 4096 robots that morning, and the fixes only free memory). The 17:34 attempt failed the same way. `nvidia-smi` then showed the cause: another user's training (`Unitree-Go2-Flat`, `/mnt/ubuntu/chirag/marl_quadruped`, 2096 robots, started 16:18) holding 1.3 GB. To start once it ends (~19:40 at its pace) |
+| rung 7, third try (4 Nov) | started with all fixes: 9.26 s/iteration. Its first log showed robots with blown-up physics (`default_pose` −2×10¹³), fixed with `physics_exploded` (`18e7e21`); restart from that commit on |
+| rung 7, with the guard (4 Nov) | running. At iteration 26: 9.71 s/iteration (~16 h), every reward term normal-sized again, `nan_state` 0, `physics_exploded` 1.2 (~10% of episode endings: to watch, should fall as the gait forms), `terrain_levels` 0.55 (down from 1.6, normal before it walks) |
+| 8 dynamics, 9 hard terrain | built and tested (`ea62402`); run after rung 7 with `train_ladder.sh 7` |
 
 **Seen in the viewer (rungs 1-4):**
 - In rungs 1-3 the hind legs kneel slightly at low commanded speeds, sometimes with the body
@@ -1357,7 +1362,7 @@ event stores its value.
     setup, not as findings.
 - **What it does not explain:** the slight kneeling in rungs 1-3 (`leg_ground_frac` 0.001 →
   0.099 → 0.248), which has no `effort_limits`. That is still the reward's blind spot from
-  [Status](#status-3-nov). Rung 5's `leg_contact` term is still its test.
+  [Status](#status-4-nov). Rung 5's `leg_contact` term is still its test.
 - **Next:**
   1. Rung 4 again with the fix, 1500 iterations (`bash scripts/train_ladder.sh 4`).
      Pass: the curves stay like rung 3's past iteration 800, and
@@ -1639,6 +1644,18 @@ Bisection (4L/4S) costs about 6 h. Splitting rung 4 into its ~10 items would cos
     with μ 1.0. A 10-line check (drop the robot, read the contacts) settled it.
 20. **Watch the units of a progress display.** rsl_rl's ETA is h:m:s and wraps every 24 h.
     "12:54:48" was 5.5 days.
+21. **"Not NaN" is not "fine".** A simulation can blow up to huge finite values (hip angles of
+    10⁶ rad) that a NaN check never sees. Bound the physically possible (joint and base
+    speed) and reset what exceeds it.
+22. **Running normalizers remember every outlier.** The teacher normalizes its inputs with
+    running statistics, so a few exploded robots inflate them for the rest of the run, and
+    normal inputs then look like zeros. Catch blow-ups before they reach the batch.
+    And check the config class's defaults, not the base class's: I read the base default
+    (off) for the normalization, while the teacher's class turns it on.
+23. **Size the obstacles to the robot, from sources.** A trotting Go2 climbs 10-15 cm
+    comfortably and 18-20 cm at a stretch; 25-30 cm needs a different motion (jumping, no
+    fixed gait). Build the curriculum as a gradient per kind of ground, so easy and hard
+    stay in the mix, and put the stretch at the top rows only.
 
 ## What to watch in a rung run (repro0, 0b, ...)
 

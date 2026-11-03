@@ -8,12 +8,18 @@ same poster. Poster and text follow the
 `Mjlab-Velocity-PGTT-{Teacher,Student}-Unitree-Go2` configuration. `B` below means the
 number of parallel simulated robots.
 
-> **Update, 3 Nov 2026.** The teacher is no longer trained with the `...-Teacher-...` task's
+> **Update, 4 Nov 2026.** The teacher is no longer trained with the `...-Teacher-...` task's
 > rewards. That reward set never produced a walking policy
 > ([experiments.md](experiments.md)). It is rebuilt as a ladder:
 > - the official PGTT setup (`...-Repro-...`), which walks;
-> - one change at a time up to `...-Rung7-...`, which has this page's terrain, sensors,
->   observations and randomization.
+> - one change at a time up to `...-Rung9-...`.
+>
+> Rung 7 has this page's terrain, sensors, observations and randomization. Rung 8 adds 90
+> privileged dynamics values (privileged 53 → 143). Rung 9 trains on a harder recipe
+> (`PGTT_HARD_TERRAINS_CFG`), with every kind scaling from easy to hard by row:
+> - stairs 2-18 cm;
+> - rough ground 0-10 cm;
+> - boulders 3-15 cm.
 >
 > Rung 7 keeps PGTT's reward set: tracking +1 / +0.5, no orientation or joint-power terms,
 > plus `action_acc`, `base_height`, `leg_contact` and `joint_limits`. It also keeps PGTT's PPO
@@ -75,13 +81,13 @@ weights ramp from 10% to full strength over `1500 × 24` training steps.
 | `proprio_history` | 84 | Joint position history `3×12`, velocity history `2×12`, action history `2×12` |
 | `height` | 99 | Clean 11×9 yaw-aligned downward-ray terrain map |
 | `height_noisy` | 99 | Simulated head LiDAR returns converted to the same grid, then corrupted |
-| `privileged` | 53 | Body linear velocity, foot contacts/forces/normals, friction, leg contact, external wrench |
+| `privileged` | 53 (143 from rung 8) | Body linear velocity, foot contacts/forces/normals, friction, leg contact, external wrench; from rung 8 also the 90 randomized dynamics values (mass, CoM, motor strength, Kp/Kd, armature, damping, joint friction, encoder bias, delay) |
 | `critic` | 57 | Clean `policy`-style body data plus body linear velocity |
 
 The [teacher routing](../mjlab/tasks/velocity/config/go2/rl_cfg.py) concatenates
 `policy + proprio_history` for 138 actor body inputs, and uses the clean height 99 and
-privileged 53 separately. Its critic concatenates `critic + height + privileged` for
-209 inputs. The student sees `policy` 54 and `height_noisy` 99. Clean heights and
+privileged 53 separately (143 from rung 8). Its critic concatenates
+`critic + height + privileged` for 209 inputs (299 from rung 8). The student sees `policy` 54 and `height_noisy` 99. Clean heights and
 privileged data are present **only as training targets and teacher inputs** in stage 2.
 
 The student LiDAR simulation emits 16 elevation rings from `-80°` to `-10°` with 4°

@@ -120,21 +120,29 @@ link and measure end-to-end latency before relying on terrain perception.
 
 ## Reproducible path to a deployment candidate
 
-Train on a GPU-capable host. The teacher is the top rung of the ladder (rung 7: mixed terrain,
-full randomization), not the old `Mjlab-Velocity-PGTT-Teacher-Unitree-Go2` task, which never
-walked ([experiments.md](experiments.md)). As of 3 Nov 2026 rungs 1-6 pass. The rung 4/5
-collapse was a bug in the effort-limit randomization, now fixed. Rung 7 crashed on its first
-try and is to run again with the terrain fixes. Full steps: [COMMANDS.md](../COMMANDS.md) 4d.
-Before distilling, check that the student task loads a rung-7 teacher. The rungs have no
-`height_noisy` group, but the student task builds its own.
+Train on a GPU-capable host. The teacher is the top rung of the ladder (rung 9: the hard
+terrain gradient, full randomization, privileged dynamics). It is not the old
+`Mjlab-Velocity-PGTT-Teacher-Unitree-Go2` task, which never walked
+([experiments.md](experiments.md)).
+
+**As of 4 Nov 2026:**
+- rungs 1-6 pass;
+- the rung 4/5 collapse was a bug in the effort-limit randomization, now fixed;
+- rung 7 is running with the terrain fixes, and rungs 8 and 9 follow it.
+
+Full steps: [COMMANDS.md](../COMMANDS.md) 4d. **Before distilling:** the Student task builds
+its own teacher inputs, with 53 privileged values and no `dynamics`. So a rung 8+ teacher does
+not load into it until the Student task uses the rung's teacher groups. Then check that the
+student can reconstruct each part of `dynamics`
+([research_terrain_and_privileged_state.md](research_terrain_and_privileged_state.md)).
 
 ```bash
-python scripts/train.py Mjlab-Velocity-PGTT-Rung7-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=10000 --agent.run-name teacher_full
+python scripts/train.py Mjlab-Velocity-PGTT-Rung9-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=10000 --agent.run-name teacher_full
 python scripts/train.py Mjlab-Velocity-PGTT-Student-Unitree-Go2 --terrain mixed --env.scene.num-envs 4096 --teacher-checkpoint logs/rsl_rl/go2_pgtt_repro/<date>_<time>_teacher_full/model_9999.pt
 ```
 The student task is built on the old teacher task's environment. Before the real student run,
-check with a short smoke run that it loads the rung-7 teacher (same network and observation
-sizes).
+check with a short smoke run that it loads the rung-9 teacher (same network and observation
+sizes; see above).
 
 Evaluate the resulting student separately on each surface. Repeat difficulty values
 0, 0.5 and 1, and inspect the motion as well as the JSON metrics. The evaluator reports
