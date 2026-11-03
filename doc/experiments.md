@@ -60,7 +60,8 @@ everything here are in [COMMANDS.md](../COMMANDS.md).
 | 2 Nov | Hack check `--randomized True` with falls per robot parameter (T1/T2/T3) | the nominal-only check can't see failures under randomization | `413f2d1` | built; used on rung 4 |
 | 2 Nov | Docs: diagnosis results, the bug, inline comments on the reward code; "legs are frictionless" corrected (they grip with μ 1.0) | | `77080bf` | |
 | 3 Nov | `base_height` target 0.25 → **0.265 m**, weight kept at −50 | make a slight sag cost something without starving early learning | `4bb3280` | applies from rung 7 / the teacher on |
-| 3 Nov | Rungs drop the student LiDAR; ray-cast cache; `nan_state` termination; tests | rung 7: 80 s per iteration, NaN crash | (uncommitted) | stairs step 2971 → 239 ms on the CPU; GPU run pending |
+| 3 Nov | Rungs drop the student LiDAR; ray-cast cache; `nan_state` termination; tests | rung 7: 80 s per iteration, NaN crash | `6da5075` | stairs step 2971 → 239 ms on the CPU; GPU run pending |
+| 3 Nov | Rung 7: heading commands for 80% of the robots (stiffness 0.5) | pre-flight review: with free yaw rates even a perfect walker was promoted by the terrain curriculum in only 52% of episodes | (this commit) | perfect walker promoted 84%, demoted 14% |
 
 ## All runs
 
@@ -854,8 +855,73 @@ The official PGTT flat-ground setup, ported to mjlab (section 2 of
   - resets robots with NaN physics (`nan_state`);
   - uses the cached ray casts.
 
-  The rerun also uses `base_height` at 0.265 m (rung 5's section), so it differs from rung 6 in
-  two ways: the terrain and the height target.
+  The rerun also differs from rung 6 in two other ways:
+  - the `base_height` target is 0.265 m (rung 5's section);
+  - 80% of the robots get heading commands, needed by the curriculum (next section).
+
+#### Pre-flight review before the rung 7 rerun (3 Nov)
+
+Checked against the built rung 7 config, the official PGTT code and the legged_gym practice.
+
+**1. Fixed: the terrain curriculum could barely promote anyone.**
+- **The rule:** `terrain_levels_vel` promotes a robot that ended its episode more than 4 m
+  (half a tile) from its start. It demotes one that covered less than half of
+  |command| × 20 s.
+- **The problem:** rung 6's commands give every robot a yaw rate up to ±1 rad/s, held for
+  8-12 s. A robot that tracks them exactly walks in arcs and circles. Simulated for a
+  *perfect* walker (exact tracking, no falls; 20000 episodes):
+
+  | Commands | Promoted | Demoted |
+  |---|---|---|
+  | rung 6/7 as they were | 52% | 43% |
+  | no yaw at all | 89% | 9% |
+  | heading commands, 100% of robots (stiffness 0.5) | 87% | 11% |
+  | **heading commands, 80% of robots** (chosen) | **84%** | **14%** |
+
+  A real policy tracks worse and falls sometimes. So with the old commands the levels would
+  have stalled near the start (≤ 3), and 10000 iterations would not have reached the high
+  stairs.
+- **The fix, as in legged_gym on rough terrain:** heading commands. The robot gets a
+  direction, its yaw-rate command is 0.5 × the heading error (clipped to ±1), so it turns
+  and then walks straight. 20% of the robots keep direct yaw rates, as the joystick sends
+  them.
+- **What stays the same for the policy:** it still only sees a yaw-rate command. Export
+  writes `heading: None`, and `eval_gait.py` turns heading off.
+- **Where:** training only (with the curriculum). The viewer keeps the plain commands.
+- **Test:** `test_rung7_trains_with_heading_commands`.
+
+**2. Checked, fine:**
+- **Spawn height.** Stair tiles put their spawn point on top of the centre platform
+  (`(num_steps + 1) × step_height`), and heightfield tiles at their surface. No robot starts
+  inside the terrain.
+- **Reward weights.** The official PGTT stairs task uses the same reward weights as its flat
+  task (`go2/robot_config.py`). It trains on one fixed terrain level per run
+  (`terrains/level04.npy` by default), with no curriculum. That's why it never had problem 1.
+  Our `foot_phase` matches its terrain-aware swing apex (up to +15 cm).
+- **`foot_phase` on stairs.** The stance target is "feet 0.30 m below the trunk, along the
+  trunk's up axis". On a 13 cm step with a level trunk, the reward would drop to ~0.5. The
+  robot can win it back by pitching its trunk with the stairs (~20° for 13 cm over the
+  ~0.38 m front-to-rear foot spacing), which is the natural climbing posture. Nothing
+  penalizes that pitch (no `orientation` term).
+- **Exploits on stairs and what guards them:**
+
+  | Exploit | Guard |
+  |---|---|
+  | kneeling or resting a shin on a step | `leg_contact` |
+  | crouching | `base_height`, `foot_phase` |
+  | a toe hitting a riser during swing | `swing_contact` |
+  | a trunk or hip on an edge | `body_contact` ends the episode |
+  | a robot that blows up | `nan_state` |
+
+**3. To watch in the run (not fixable before it):**
+
+| What | Bad sign |
+|---|---|
+| `Curriculum/terrain_levels` | stuck at ~1.5, or falling |
+| speed ratio on stairs (`check_reward_hacking.py --terrain stairs`) | below 0.65 |
+| `leg_ground_frac` | rising |
+| `Episode_Termination/nan_state` | many |
+| the iteration time | — |
 
 ### How each rung is judged
 

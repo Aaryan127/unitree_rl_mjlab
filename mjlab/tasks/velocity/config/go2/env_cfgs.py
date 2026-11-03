@@ -16,6 +16,7 @@
 #   unitree_go2_pgtt_repro_smooth_env_cfg          rung 0b: + a tremor penalty
 #   unitree_go2_pgtt_rung_env_cfg(rung)            rungs 1-7: + one teacher change each
 
+import math
 from dataclasses import replace  # copy of a dataclass with some fields changed
 
 import mujoco  # the physics engine's Python API (used to edit the robot model, MjSpec)
@@ -647,4 +648,16 @@ def unitree_go2_pgtt_rung_env_cfg(rung: int, play: bool = False) -> ManagerBased
     cfg.scene.terrain = teacher.scene.terrain  # mixed: stairs, slopes, rough, waves, flat
     if "terrain_levels" in teacher.curriculum:  # not in play mode
       cfg.curriculum["terrain_levels"] = teacher.curriculum["terrain_levels"]
+      # Heading commands for 80% of the robots, as legged_gym does on rough terrain: the
+      # robot gets a direction and the yaw-rate command is 0.5 x the heading error, so it
+      # turns, then walks straight. The curriculum promotes a robot that got > 4 m from its
+      # start; with free yaw rates up to 1 rad/s it walks in circles, and even a perfect
+      # walker was promoted in only 52% of episodes (demoted 43%), so the levels would
+      # barely rise. With this: 84% / 14%. The other 20% keep direct yaw rates (the
+      # joystick's), and the policy only ever sees a yaw rate (export sets heading None).
+      twist = cfg.commands["twist"]
+      twist.heading_command = True  # type: ignore[attr-defined]
+      twist.heading_control_stiffness = 0.5  # type: ignore[attr-defined]
+      twist.rel_heading_envs = 0.8  # type: ignore[attr-defined]
+      twist.ranges.heading = (-math.pi, math.pi)  # type: ignore[attr-defined]
   return cfg

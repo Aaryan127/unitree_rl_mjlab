@@ -133,6 +133,16 @@ class AuditRegressionTests(unittest.TestCase):
       self.assertIn("nan_state", cfg.terminations)
     self.assertIn("height_noisy", load_env_cfg(TASK).observations)  # the student keeps it
 
+  def test_rung7_trains_with_heading_commands(self):
+    # Free yaw rates make robots walk in circles, so the terrain curriculum (> 4 m from the
+    # start) could barely promote even a perfect walker.
+    from mjlab.tasks.velocity.config.go2.env_cfgs import unitree_go2_pgtt_rung_env_cfg
+
+    twist = unitree_go2_pgtt_rung_env_cfg(7).commands["twist"]
+    self.assertTrue(twist.heading_command)
+    self.assertEqual(twist.rel_heading_envs, 0.8)
+    self.assertFalse(unitree_go2_pgtt_rung_env_cfg(6).commands["twist"].heading_command)
+
   def test_raycast_cache_matches_a_fresh_cast(self):
     from mjlab.envs import ManagerBasedRlEnv
     from mjlab.tasks.velocity.config.go2.env_cfgs import unitree_go2_pgtt_rung_env_cfg

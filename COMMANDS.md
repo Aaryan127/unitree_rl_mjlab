@@ -217,7 +217,8 @@ tmux attach -t ladder
   lists `..._rung1_collisions/...` and `..._rung2_delays/...`: run
   `bash scripts/train_ladder.sh 3`.
 - A rung that was interrupted starts again from zero (the half-finished folder stays; ignore it).
-- **Rung 7 again after the terrain fixes (3 Nov):** `git pull`, then
+- **Rung 7 again after the terrain fixes (3 Nov):** includes heading commands for 80% of the
+  robots, so the terrain curriculum can promote them. `git pull`, then
   `bash scripts/train_ladder.sh 7`. It runs only rung 7 (6000 iterations), then the check.
   - Check the **Iteration time** in the first boxes: before the fix it was ~80 s.
   - The **ETA** wraps every 24 h (it prints h:m:s only). So `ETA: 12:54:48` can mean
