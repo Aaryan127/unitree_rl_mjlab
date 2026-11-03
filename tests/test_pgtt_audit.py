@@ -122,5 +122,36 @@ class AuditRegressionTests(unittest.TestCase):
       env.close()
 
 
+  def test_rungs_skip_the_student_lidar_and_reset_nan_physics(self):
+    # The student-only LiDAR cost ~75% of rung 7's step time; one NaN robot crashed rung 7.
+    from mjlab.tasks.velocity.config.go2.env_cfgs import unitree_go2_pgtt_rung_env_cfg
+
+    for rung in (1, 7):
+      cfg = unitree_go2_pgtt_rung_env_cfg(rung)
+      self.assertNotIn("height_noisy", cfg.observations)
+      self.assertFalse(any(s.name == "lidar" for s in cfg.scene.sensors))
+      self.assertIn("nan_state", cfg.terminations)
+    self.assertIn("height_noisy", load_env_cfg(TASK).observations)  # the student keeps it
+
+  def test_raycast_cache_matches_a_fresh_cast(self):
+    from mjlab.envs import ManagerBasedRlEnv
+    from mjlab.tasks.velocity.config.go2.env_cfgs import unitree_go2_pgtt_rung_env_cfg
+
+    cfg = unitree_go2_pgtt_rung_env_cfg(6)
+    cfg.scene.num_envs = 2
+    env = ManagerBasedRlEnv(cfg=cfg, device="cpu")
+    try:
+      env.reset()
+      env.step(torch.zeros(2, 12))
+      scan = env.scene["height_scanner"]
+      cached = scan.data.hit_pos_w.clone()
+      scan._cast_poses = None  # force a new cast
+      self.assertTrue(torch.equal(cached, scan.data.hit_pos_w))
+      env.step(torch.ones(2, 12))  # the robots move: the cache must not be reused
+      self.assertFalse(torch.equal(cached, scan.data.hit_pos_w))
+    finally:
+      env.close()
+
+
 if __name__ == "__main__":
   unittest.main()

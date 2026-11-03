@@ -451,6 +451,16 @@ def unitree_go2_pgtt_repro_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     key = "joint_pos" if "joint_pos" in terms else "joint_pos_history"  # name differs per group
     terms[key].noise = Unoise(n_min=-0.03, n_max=0.03)  # +-0.03 rad joint-angle noise
 
+  # No student LiDAR: its map (group height_noisy) is not a teacher input, but its 1440
+  # rays per robot were tested against every terrain geom (4049 boxes on stairs) at every
+  # step, ~75% of rung 7's step time. The student task builds its own config and keeps it.
+  cfg.observations.pop("height_noisy", None)
+  cfg.scene.sensors = tuple(s for s in cfg.scene.sensors if s.name != "lidar")
+  # A robot whose physics turns NaN/Inf is reset (counts as a fall) instead of putting
+  # NaN into the batch, where one robot poisons the whole update (rung 7 crashed at
+  # iteration 4 with a NaN noise std).
+  cfg.terminations["nan_state"] = TerminationTermCfg(func=mdp.nan_detection)
+
   # Commands: uniform in [-1, 1], each axis non-zero with probability (0.9, 0.25, 0.5),
   # resampled every ~5 s.
   twist = cfg.commands["twist"]  # the velocity command (vx, vy, yaw rate)
@@ -568,7 +578,7 @@ def unitree_go2_pgtt_repro_smooth_env_cfg(play: bool = False) -> ManagerBasedRlE
 
 
 ##
-# The ladder from rung 0b to the full teacher (doc/reward_hacking_runs_1-3.md, "The plan").
+# The ladder from rung 0b to the full teacher (doc/experiments.md, "The plan").
 ##
 
 # Rung N's name is RUNG_NAMES[N - 1]; __init__.py registers Mjlab-Velocity-PGTT-Rung<N>-...
@@ -614,9 +624,11 @@ def unitree_go2_pgtt_rung_env_cfg(rung: int, play: bool = False) -> ManagerBased
     )  # the delayed motors (0-20 ms)
     if "actuator_delay" in teacher.events:  # the event that samples each robot's delay
       cfg.events["actuator_delay"] = teacher.events["actuator_delay"]
-    # Every observation term gets the teacher's delay range (IMU and joints 0-20 ms, the
-    # student's LiDAR map 0-60 ms).
+    # Every observation term gets the teacher's delay range (IMU and joints 0-20 ms). The
+    # student's LiDAR map (0-60 ms) is not in the rungs (see the repro config).
     for group_name, group in teacher.observations.items():
+      if group_name not in cfg.observations:
+        continue
       for term_name, term in group.terms.items():
         ours = cfg.observations[group_name].terms[term_name]
         ours.delay_min_lag, ours.delay_max_lag = term.delay_min_lag, term.delay_max_lag

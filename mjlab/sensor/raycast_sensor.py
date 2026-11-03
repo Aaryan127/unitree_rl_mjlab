@@ -524,6 +524,10 @@ class RayCastSensor(Sensor[RayCastData]):
 
     self._raycast_graph: wp.Graph | None = None
     self._use_cuda_graph: bool = False
+    # Body poses at the last cast. The terrain is static, so the same poses give the same
+    # hits and the cast can be skipped (several rewards and observations read the same
+    # sensor each step; on stairs, with thousands of box geoms, every cast is expensive).
+    self._cast_poses: torch.Tensor | None = None
 
   def edit_spec(
     self,
@@ -613,7 +617,11 @@ class RayCastSensor(Sensor[RayCastData]):
 
   @property
   def data(self) -> RayCastData:
-    self._perform_raycast()
+    assert self._data is not None
+    poses = torch.cat([self._data.xpos[:].flatten(1), self._data.xquat[:].flatten(1)], dim=1)
+    if self._cast_poses is None or not torch.equal(poses, self._cast_poses):
+      self._perform_raycast()
+      self._cast_poses = poses.clone()
     assert self._distances is not None and self._normals_w is not None
     assert self._hit_pos_w is not None
     assert self._pos_w is not None and self._quat_w is not None
