@@ -980,6 +980,17 @@ Checked against the built rung 7 config, the official PGTT code and the legged_g
 - **Before distilling:** the Student task builds its own teacher inputs (53 privileged values,
   no `dynamics`), so a rung 8+ teacher does not load into it yet. It must be built from the
   rung's config first.
+- **Compared with the literature** (doc/research_terrain_and_privileged_state.md):
+  - Miki 2022 gives its teacher 50 values: contacts, forces, normals, friction, shank contact,
+    external force, airtime.
+  - Lee 2020 gives 71 values. RMA gives 17: payload, motor strength, friction, terrain height.
+  - **None of them gives PD gains or delays.** Several (Agarwal 2022, DreamWaQ, HIM, SLR)
+    report that privileged information the student can't infer limits the student
+    (distillation gap).
+  - Rung 8 is broader on purpose, for sim-to-real.
+- **Safeguard:** before distilling, measure the student's reconstruction error per part of
+  `dynamics`. Any part it can't reconstruct (most likely Kp/Kd or encoder bias) is removed from
+  the teacher in a short follow-up rung, "8b".
 
 ### Rung 9 (`rung9_hard_terrain`): small to big obstacles, the teacher candidate
 
@@ -997,9 +1008,18 @@ Checked against the built rung 7 config, the official PGTT code and the legged_g
 
 - **Swing cap:** `foot_phase`'s `max_terrain_delta` goes from 15 to 21 cm. The swing apex is
   10 cm plus the step height near the foot, so 18 cm steps get ~3 cm of clearance.
-- **Why these tops:** a trotting Go2 should stay within what its legs can walk. It stands
-  ~28 cm tall with ~21 cm thigh and calf, and 25-30 cm steps would need jumping or climbing
-  gaits, not a trot. (Sources: doc/research_terrain_and_privileged_state.md.)
+- **Why these tops** (doc/research_terrain_and_privileged_state.md, primary sources):
+  - **Comfortable for a trotting Go2: 10-15 cm.** This matches:
+    - Unitree's spec for its own controller (15 cm Air, 16 cm Pro/EDU);
+    - PGTT (trained ≤ 13 cm, most stable at 7-9 cm in sim);
+    - Isaac Lab's Go2 preset (≤ 12 cm).
+  - **18-20 cm is a stretch.** It is ~0.7× hip height and needs perception plus a rising swing
+    apex, which rung 9 has. So rung 9's top rows (18 cm) are the stretch goal, the middle rows
+    the comfortable range.
+  - **25-30 cm is about hip height.** It was only reached with a depth camera and no gait prior
+    (Agarwal 2022: A1, 25 cm), or with jump/climb skills. Not with a fixed trot.
+  - **Boulders:** legged_gym's discrete obstacles reach 23 cm (sized for larger robots), and
+    Isaac Lab's Go2 preset ±10 cm. Rung 9's 15 cm sits between them.
 - **Cost:** 2569 terrain boxes (rung 7: 2629), +4% step time on the CPU. No robot blew up in a
   48-robot, 40-step smoke test.
 - **New code:**
