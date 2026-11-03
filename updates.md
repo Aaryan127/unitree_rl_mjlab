@@ -2,8 +2,8 @@
 
 How to use the branch and what each file does: see [instruction.md](instruction.md).
 Every command (train, tmux, find runs, check, view, copy): [COMMANDS.md](COMMANDS.md).
-Why the teacher runs failed and how the teacher is being rebuilt:
-[doc/reward_hacking_runs_1-3.md](doc/reward_hacking_runs_1-3.md).
+Every training run, change and result (the experiment log):
+[doc/experiments.md](doc/experiments.md).
 
 ## Status
 
@@ -24,9 +24,11 @@ Why the teacher runs failed and how the teacher is being rebuilt:
 - [x] Official PGTT setup reproduced on our Go2 (`repro0`): walks, 95% of the commanded speed, no falls
 - [x] Ladder from the reproduction to the full teacher (rungs 1-7, `scripts/train_ladder.sh`):
       rungs 1-3 walk
-- [ ] Rung 4+ (wider randomization) collapses after learning to walk: diagnosis running
-      (`scripts/diagnose_collapse.sh`)
-- [ ] Full teacher training on GPU (rung 7 with the fix, 10k iterations, 4096 envs)
+- [x] Rung 4/5 collapse: a bug (motors weakened at every reset), fixed; rungs 4-6 pass
+- [x] Flat-ground teacher: rung 6 (`2026-11-03_02-53-15_rung6_commands`), check WARN
+- [ ] Rung 6 with a second seed (`rung6_seed2`)
+- [ ] Rung 7 (terrain): crashed (NaN, 80 s/iteration); fixes written, to run again
+- [ ] Full teacher training on GPU (rung 7's setup, 10k iterations, 4096 envs)
 - [ ] Full student distillation on GPU (check first that the student task loads a rung-7 teacher)
 - [ ] Play both in simulation; check stairs success per terrain level
 - [ ] Build `go2_ctrl` on the robot (needs unitree_sdk2 + cyclonedds; not buildable on the dev laptop)
@@ -34,7 +36,33 @@ Why the teacher runs failed and how the teacher is being rebuilt:
 - [x] ROS 2 PointCloud2 bridge: LiDAR points -> robot-centric 11 x 9 grid -> UDP
 - [ ] Confirm LiDAR topic, TF, coverage, and timing on the physical Go2
 
+## 2026-11-03: rungs 4-6 pass, rung 7 crash fixed
+- With the motor fix the ladder restarted at rung 4:
+  - rung 4: WARN, legs down 0.297 (slight kneeling, nothing prices it yet);
+  - rung 5: WARN; at iteration 1260 its episodes last 996 steps, speed ratio 0.91, legs
+    down 0.0005, noise std 0.21;
+  - rung 6: WARN. That makes it the flat-ground teacher.
+- `base_height` target raised 0.25 → 0.265 m, weight kept at −50 (`4bb3280`). Applies from rung 7.
+- Rung 7 (terrain) crashed at iteration 4: the noise std became NaN, at 80 s per iteration.
+  The ETA of 12:54:48 wraps every 24 h and really meant ~5.5 days.
+- Profiled: the physics was ~2% of the step time. ~75% was the student-only LiDAR map, cast
+  against 4049 stair boxes; most of the rest was the height scanner re-cast ~4× per step.
+- Fixes:
+  - the rungs drop the LiDAR (the student keeps it);
+  - `RayCastSensor` caches its casts until a body moves;
+  - a `nan_state` termination resets robots with NaN physics.
+
+  Stairs step 2971 → 239 ms on the CPU. Tests added.
+- Details: doc/experiments.md, "Rung 7: the crash and the slowness".
+
 ## 2026-11-02: diagnosing the rung 4/5 collapse
+- **Result (evening): it was a bug.** `randomize_effort_limits` multiplied the *current*
+  torque limit at every reset, so the motors faded: 23.5 Nm → 11.4 after 10 resets → 2.6 after
+  30. Fixed to scale the defaults (`a21cf12`), with a regression test.
+  - Two diagnosis runs had already failed: `r5_term100` and `r4_ent001`, with the noise std
+    flat and the falls still rising.
+  - New: `check_reward_hacking.py --randomized True`, with falls per robot parameter (`413f2d1`).
+  - Corrected: the legs are not frictionless (they grip with μ 1.0).
 - Rungs 4 and 5 learn to walk by iteration 100-200, then get worse. Rung 4's episodes go from
   811 to 173 steps; rung 5's robots end up falling about once a second.
 - What moved first: trunk/hip falls rise from iteration ~200. The noise std turns up later
@@ -50,7 +78,7 @@ Why the teacher runs failed and how the teacher is being rebuilt:
   restarted 16:36.
 - COMMANDS.md rewritten around tmux one-liners, real times (~7 s per iteration, ~3 h per
   1500), command-line overrides, the full-teacher command and recovery after a reboot.
-- Details: doc/reward_hacking_runs_1-3.md, "Rungs 4 and 5 collapse".
+- Details: doc/experiments.md, "Rungs 4 and 5 collapse".
 
 ## 2026-11-01: the ladder from the reproduction to the full teacher
 - Rung 0b (`smooth0b`): repro0 plus `action_acc` −0.02 (penalty on the action's second
@@ -151,7 +179,7 @@ through the ladder (`Repro` and `Rung<N>` tasks, experiment `go2_pgtt_repro`). T
 the teacher's collisions, delays, randomization, three of its rewards, commands and terrain, but
 keeps PGTT's reward set (tracking ×1, no orientation/power terms), joint damping and PPO settings.
 In the reproduction the foot-phase target is measured from the IMU (stance 0.30 m, swing apex
-0.20 m below it), as in the official code. Exact differences: doc/reward_hacking_runs_1-3.md, "The
+0.20 m below it), as in the official code. Exact differences: doc/experiments.md, "The
 ladder in detail".
 
 - **Rewards** start from the official PGTT code (github.com/NtagkasAlex/phase_guided_terrain_traversal),

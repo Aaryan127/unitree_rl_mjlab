@@ -1,44 +1,92 @@
-# Reward hacking in the PGTT teacher: runs 1-4, the fixes, the first walking policy, and the ladder
+# Experiments: the PGTT teacher for the Unitree Go2
 
-Four flat-ground teacher runs (27-31 Oct 2026) each found a different way to score without
-walking: v1 lay down and paddled, v2 fell on purpose, v3 vibrated its joints, v4 (with
-tanh-bounded actions) vibrated with bang-bang actions and fell every 1.2 s. Each fix closed
-one loophole and exposed the next.
+Every training run, every change and every result of the PGTT teacher, in order (27 Oct to
+3 Nov 2026). This file was `doc/reward_hacking_runs_1-3.md` until 3 Nov. Commands for
+everything here are in [COMMANDS.md](../COMMANDS.md).
 
-After run 4 the approach changed (see [Why four runs failed](#why-four-runs-failed) and
-[The plan](#the-plan-reproduce-then-add-one-thing-at-a-time)):
-- the loss we train with pushes the policy towards saturated, bang-bang actions. This is
-  proven below, and the official PGTT code (Brax PPO) avoids it;
-- every run changed ~15 things against the published setup at once, so no failure could be
-  attributed to a cause;
-- the next run reproduces the official PGTT setup, which is published to walk. Our
-  additions then go back in one at a time.
+**How to read it:**
+- [Where things stand](#where-things-stand-3-nov) and the [changelog](#changelog-every-change-in-order)
+  give the whole story in one page.
+- [All runs](#all-runs) lists every run with its folder and result.
+- The sections after that are the details, roughly in the order things happened:
+  1. the four failed teacher runs (v1-v4);
+  2. why they failed and the plan;
+  3. the reproduction (rung 0) and the ladder (rungs 1-7);
+  4. the rung 4/5 collapse and its diagnosis, the motor bug, the rung 7 crash;
+  5. the lessons.
 
-**Result (31 Oct):** the reproduction (`repro0`) walked: speed ratio 0.95, no falls, no
-saturation, noise std 0.70 → 0.28. Run 4's own logs then confirmed the entropy diagnosis: its
-noise std was exactly 1.000 (the cap) at every one of 6944 iterations. See
-[Rung 0 result](#rung-0-result-the-first-walking-policy).
+## Where things stand (3 Nov)
 
-| Run | Folder (`logs/rsl_rl/go2_pgtt_teacher/`) | What it learned | Fix (commit) |
-|---|---|---|---|
-| v1 | `2026-10-27_20-18-35_flat` → `2026-10-28_01-14-38_flat` (to 11000) | lie on the belly and paddle | rebalanced rewards, body-contact termination, hacking checker (`5981fe3`) |
-| v2 | `2026-10-29_04-12-16_flat_v2` (to 4300, machine reboot) | walk at 500, then fall on purpose | reward clip at 0, noise std cap (`6a11dc1`) |
-| v3 | `*_flat_v3` (10000) | vibrate the joints between their limits | tanh-bounded actions, PGTT gains and foot-phase formula (`3164449`) |
-| v4 | `2026-10-30_16-23-42_flat_v4` (6300 checked) | bang-bang vibration, a fall every 1.2 s | entropy on the squashed action, PGTT reproduction as baseline (`15ba559`) |
-| repro0 | `go2_pgtt_repro/*_repro0` (3000) | **walks**: trot, 95% of commanded speed, no falls | baseline for the ladder |
-| smooth0b | `go2_pgtt_repro/*_smooth0b` (1500) | walks (viewer); + tremor penalty | parent of rungs 1-7 |
-| rungs 1-7 | `go2_pgtt_repro/*_rung<N>_<name>` | 1-3 walk (WARN: slight kneeling); 4 and 5 learn to walk, then collapse | [The ladder in detail](#the-ladder-in-detail-what-every-rung-trains-with) |
-| `rung4_term100` | `go2_pgtt_repro/*_rung4_term100` (1500) | kneels in place instead of falling | [Rungs 4 and 5 collapse](#rungs-4-and-5-collapse-1-nov) |
-| diagnosis | `go2_pgtt_repro/*_r[456]_*` (2 of 4 run) | both collapse: neither the fall price nor the entropy bonus is the cause | [The diagnosis batch](#the-diagnosis-batch-scriptsdiagnose_collapsesh-2-nov) |
+- **Flat ground is solved.** Rung 6 (`2026-11-03_02-53-15_rung6_commands`) walks with every
+  teacher change except terrain:
+  - full-body collisions;
+  - motor and sensor delays;
+  - pushes;
+  - the wide randomization;
+  - the anti-kneeling rewards;
+  - the teacher's commands.
 
-**Where things stand (2 Nov, 23:00):**
-- Rungs 0-3 walk. Rungs 4 and 5 learned to walk, then collapsed.
-- **Cause found: a bug.** Rung 4's "weaker motors" randomization made the motors weaker
-  again at *every* reset, so each robot's torque shrank over training (to ~11% after 30
-  resets). Fixed and tested. See
-  [Root cause: the motors weakened at every reset](#root-cause-the-motors-weakened-at-every-reset-2-nov).
-- Next: run rung 4 again with the fix, then rungs 5-7, then the full teacher (`COMMANDS.md` 4a/4d).
-- Commands for all of this: [COMMANDS.md](../COMMANDS.md).
+  Check: WARN, not HACK.
+- **The rung 4/5 collapse was a bug**, not a learning problem. The motors got weaker at
+  every reset. After the fix, rungs 4, 5 and 6 pass.
+- **Rung 7 (terrain) crashed** at iteration 4 with a NaN, running at 80 s per iteration.
+  Three fixes, tested on the CPU, not yet run on the GPU:
+  1. the rungs no longer compute the student-only LiDAR;
+  2. ray casts are cached;
+  3. a robot with NaN physics is reset.
+
+  Stairs step time: 2971 → 239 ms.
+- **Next:**
+  1. seed 2 of rung 6 (is rung 6 reliable?);
+  2. rung 7 again (`bash scripts/train_ladder.sh 7`);
+  3. then the 10000-iteration teacher on rung 7's setup (COMMANDS.md 4d), possibly started
+     from rung 6's checkpoint.
+
+## Changelog: every change, in order
+
+| Date | Change | Why | Commit | Result |
+|---|---|---|---|---|
+| 26 Oct | Sim-to-real robustness for the teacher: motor and sensor delays; per-robot Kp/Kd, **effort limits**, mass, friction | the real robot differs from the model | `c8ffa42` | also brought in, unnoticed, the effort-limit bug found on 2 Nov |
+| 27 Oct | Teacher trains on mixed terrain | the target task is stairs | `98f41eb` | v1-v4 then ran on the `flat` profile |
+| 29 Oct | v1 fix: rewards rebalanced, body-contact termination, the reward-hacking check | v1 lay down and paddled | `5981fe3` | v2 walked at 500, then fell on purpose |
+| 29 Oct | v2 fix: step reward clipped at 0, noise std cap | v2 fell on purpose | `6a11dc1` | v3 vibrated its joints |
+| 30 Oct | v3 fix: tanh-bounded actions, PGTT gains, PGTT foot-phase formula | v3 vibrated between the joint limits | `3164449` | v4: bang-bang vibration |
+| 31 Oct | Reproduce the official PGTT setup (rung 0); entropy on the squashed action | the entropy bonus paid for saturated actions; v1-v4 changed ~15 things at once | `15ba559` | **repro0 walks** (speed ratio 0.95) |
+| 31 Oct | Rung 0b: `action_acc` −0.02 (second difference of the action) | repro0 trembled at ~12 Hz (tremor 0.37) | `71daac2` | smooth0b walks, tremor gone |
+| 1 Nov | The ladder: rungs 1-7, one teacher change each, `train_ladder.sh` | to find which change breaks training | `89de6fc` | rungs 1-3 walk (slight kneeling); rungs 4 and 5 collapse |
+| 1 Nov | `rung4_term100`: fall penalty ×100 | test "falls are too cheap" | (command-line override) | kneels in place: HACK |
+| 2 Nov | Diagnosis batch (`diagnose_collapse.sh`), `summarize_runs.py` | which cause of the collapse: fall price, entropy, both | `5f0d298` | 2 of 4 runs, both collapse: neither is the cause |
+| 2 Nov | **Fix: effort limits scaled from the defaults**, not compounded at every reset; regression test | the motors faded to ~11% after 30 resets | `a21cf12` | the collapse is gone: rungs 4-6 pass |
+| 2 Nov | Hack check `--randomized True` with falls per robot parameter (T1/T2/T3) | the nominal-only check can't see failures under randomization | `413f2d1` | built; used on rung 4 |
+| 2 Nov | Docs: diagnosis results, the bug, inline comments on the reward code; "legs are frictionless" corrected (they grip with μ 1.0) | | `77080bf` | |
+| 3 Nov | `base_height` target 0.25 → **0.265 m**, weight kept at −50 | make a slight sag cost something without starving early learning | `4bb3280` | applies from rung 7 / the teacher on |
+| 3 Nov | Rungs drop the student LiDAR; ray-cast cache; `nan_state` termination; tests | rung 7: 80 s per iteration, NaN crash | (uncommitted) | stairs step 2971 → 239 ms on the CPU; GPU run pending |
+
+## All runs
+
+| Run | Folder | Iterations | Setup | Result |
+|---|---|---|---|---|
+| v1 | `go2_pgtt_teacher/2026-10-27_20-18-35_flat` → `2026-10-28_01-14-38_flat` | 11000 | old teacher, flat | HACK: lies on its belly and paddles |
+| v2 | `go2_pgtt_teacher/2026-10-29_04-12-16_flat_v2` | 4300 (reboot) | + v1 fix | walks at 500, then falls on purpose |
+| v3 | `go2_pgtt_teacher/*_flat_v3` | 10000 | + v2 fix | HACK: vibrates the joints |
+| v4 | `go2_pgtt_teacher/2026-10-30_16-23-42_flat_v4` | 6300 checked | + tanh actions | HACK: bang-bang vibration, a fall every 1.2 s |
+| repro0 | `go2_pgtt_repro/*_repro0` | 3000 | official PGTT setup | **walks**: trot, speed ratio 0.95, no falls; tremor 0.37 |
+| smooth0b | `go2_pgtt_repro/*_smooth0b` | 1500 | + `action_acc` | walks, no tremor; parent of the rungs |
+| rung 1 | `*_rung1_collisions` | 1500 | + full-body collisions | WARN: tremor 0.118; legs down 0.001 |
+| rung 2 | `*_rung2_delays` | 1500 | + delays | WARN: tremor; legs down 0.099 |
+| rung 3 | `*_rung3_pushes` | 1500 | + pushes | WARN: legs down 0.248, tremor |
+| rung 4 (bug) | `2026-11-01_*_rung4_randomization` | ~1200 (stopped) | + randomization | collapses after ~200; check WARN (nominal only) |
+| rung 5 (bug) | `2026-11-01_11-23-59_rung5_rewards` | 1500 | + rewards | HACK: 58 falls/min, speed ratio 0.03 |
+| `rung4_term100` (bug) | `2026-11-01_14-56-00_rung4_term100` | 1500 | rung 4 + termination −100 | HACK: kneels in place, legs down 0.645 |
+| `r5_term100` (bug) | `2026-11-02_18-20-07_r5_term100` | 1500 | rung 5 + termination −100 | HACK: collapses like rung 5 |
+| `r4_ent001` (bug) | `2026-11-02_20-11-38_r4_ent001` | 997 (crash) | rung 4 + entropy 0.001 | HACK at 900: legs down 0.444; falls rise with the noise std flat |
+| **rung 4** | `2026-11-02_23-13-26_rung4_randomization` | 1500 | rung 4, motor fix | WARN: legs down 0.297, tremor; no collapse |
+| **rung 5** | `2026-11-03_01-00-05_rung5_rewards` | 1500 | rung 5, motor fix | WARN; at 1260: episode 996, speed ratio 0.91, legs down 0.0005 |
+| **rung 6** | `2026-11-03_02-53-15_rung6_commands` | 1500 | + teacher commands | WARN: **the flat-ground teacher** |
+| rung 7 | `2026-11-03_05-00-35_rung7_terrain` | 4 (crash) | + terrain | NaN std at iteration 4, 80 s/iteration |
+
+"(bug)" means trained with the fading motors: those results describe the bug, not the setup.
+Folders are under `logs/rsl_rl/` on the GPU machine.
 
 ## How the reward works here
 
@@ -765,6 +813,10 @@ The official PGTT flat-ground setup, ported to mjlab (section 2 of
 - **Rewards:** unchanged.
 - **Risk:** combined diagonal-and-turning commands are harder, so tracking may drop.
 - **Watch:** speed ratio, `standing_drift`, `eval_gait.py`'s diagonal and stand rows.
+- **Result (3 Nov, `2026-11-03_02-53-15_rung6_commands`):** finished 1500 iterations, check
+  **WARN** (no HACK), so the ladder went on to rung 7. This is the flat-ground teacher: everything
+  but terrain. Still to do: a second seed (`rung6_seed2`), and `eval_gait.py` on the diagonal and
+  stand commands.
 
 ### Rung 7 (`rung7_terrain`): stairs and rough ground, the full teacher
 
@@ -795,6 +847,15 @@ The official PGTT flat-ground setup, ported to mjlab (section 2 of
   stairs), or the curriculum stalling at low rows.
 - **Watch:** `Curriculum/terrain_levels` (should rise), speed ratio (≥ 0.65 on stairs),
   `leg_ground_frac`, falls. In the viewer: `--terrain stairs`.
+- **Result (3 Nov, `2026-11-03_05-00-35_rung7_terrain`):** crashed at iteration 4 with a NaN
+  noise std, at 80 s per iteration. Causes and fixes: [Rung 7: the crash and the
+  slowness](#rung-7-the-crash-and-the-slowness-3-nov). Since then, every rung (0-7):
+  - has no student LiDAR (`height_noisy` group, `lidar` sensor);
+  - resets robots with NaN physics (`nan_state`);
+  - uses the cached ray casts.
+
+  The rerun also uses `base_height` at 0.265 m (rung 5's section), so it differs from rung 6 in
+  two ways: the terrain and the height target.
 
 ### How each rung is judged
 
@@ -804,7 +865,7 @@ The official PGTT flat-ground setup, ported to mjlab (section 2 of
 | Fails when | any HACK (the chain stops) | speed ratio < 0.9 (rung 7: < 0.65 on stairs), falls ≥ 0.2/min, saturation ≥ 0.05, tremor ≥ 0.15, swings/s more than 5% off the clock, or a clear regression against the rung before |
 | WARN | counts as a pass, the chain continues | read which metric warned and whether it is new in this rung |
 
-### Status (2 Nov)
+### Status (3 Nov)
 
 | Rung | Status |
 |---|---|
@@ -817,7 +878,10 @@ The official PGTT flat-ground setup, ported to mjlab (section 2 of
 | 4 again (`rung4_term100`) | finished, **HACK**: kneels in place. `leg_ground_frac` **0.645**, speed ratio **0.005**, base 0.249 m, falls 5.6/min (fell_over 27, body_contact 10) |
 | diagnosis (2 of 4 runs) | both collapse (`r5_term100`, `r4_ent001`): see [The diagnosis batch](#the-diagnosis-batch-scriptsdiagnose_collapsesh-2-nov) |
 | 4 again, with the motor fix (`2026-11-02_23-13-26_rung4_randomization`) | finished, **WARN**: `leg_ground_frac` **0.297** (HACK from 0.3), plus tremor. No collapse. The kneeling trend of rungs 1-3 continues (0.001 → 0.099 → 0.248 → 0.297): rung 4 has no `leg_contact` term, and its weaker motors and heavier trunk make leaning on a leg more useful. Rung 5's term is the fix: rung 5 trains with legs down 0.0005 |
-| **rungs 4-7: to run again** | every rung-4+ result so far was trained with the motor bug: see [Root cause](#root-cause-the-motors-weakened-at-every-reset-2-nov) |
+| 5 again, with the motor fix (`2026-11-03_01-00-05`) | finished, **WARN** (the old run: HACK) |
+| 6 commands (`2026-11-03_02-53-15`) | finished, **WARN**: the flat-ground teacher, everything but terrain |
+| 7 terrain (`2026-11-03_05-00-35`) | **crashed at iteration 4**: NaN noise std, and 80 s per iteration. Fixed, to run again: see [Rung 7: the crash and the slowness](#rung-7-the-crash-and-the-slowness-3-nov) |
+| rung 7 again | to run with the terrain fixes (`bash scripts/train_ladder.sh 7`) |
 
 **Seen in the viewer (rungs 1-4):**
 - In rungs 1-3 the hind legs kneel slightly at low commanded speeds, sometimes with the body
@@ -861,6 +925,10 @@ The official PGTT flat-ground setup, ported to mjlab (section 2 of
 come in the same rung as the term that closes it. Rung 1 and rung 5 should have been one rung.
 
 ### Rungs 4 and 5 collapse (1 Nov)
+
+> **Cause (found 2 Nov):** a bug. `effort_limits` compounded at every reset, so the motors
+> faded over training. See [Root cause](#root-cause-the-motors-weakened-at-every-reset-2-nov).
+> The reasoning below was written before that was known.
 
 **In short:** both rungs learned to walk within 100-200 iterations, then got worse until the
 robots fell about once a second. It starts in rung 4 (randomization): more and more robots
@@ -1118,7 +1186,7 @@ event stores its value.
     setup, not as findings.
 - **What it does not explain:** the slight kneeling in rungs 1-3 (`leg_ground_frac` 0.001 →
   0.099 → 0.248), which has no `effort_limits`. That is still the reward's blind spot from
-  [Status](#status-2-nov). Rung 5's `leg_contact` term is still its test.
+  [Status](#status-3-nov). Rung 5's `leg_contact` term is still its test.
 - **Next:**
   1. Rung 4 again with the fix, 1500 iterations (`bash scripts/train_ladder.sh 4`).
      Pass: the curves stay like rung 3's past iteration 800, and
@@ -1172,7 +1240,68 @@ so each third has enough falls to compare.
 It runs the *current* code. Old checkpoints are then checked with the fixed motors, not the
 fading ones they were trained with.
 
+### Rung 7: the crash and the slowness (3 Nov)
+
+Rung 7 crashed at 05:05, 5 minutes into training:
+- at iteration 4, PyTorch's sampler failed on `std >= 0`, because the noise std had become NaN;
+- every iteration took **80 s** (flat rungs: ~4-7 s).
+
+The training log's ETA (12:54:48) hid how slow that was. The ETA is printed as h:m:s and
+wraps every 24 h, so at 80 s per iteration rung 7 would really have taken ~5.5 days.
+
+**The slowness: ray casting, not physics.** Measured on the laptop CPU, stairs only, 8 robots:
+
+| Part of one env step | Time |
+|---|---|
+| the whole step | 2971 ms |
+| physics (4 substeps × 18 ms) | ~70 ms |
+| `lidar_height_map` (the student's LiDAR map) | ~2200 ms (~75%) |
+| the other ray casts (height scan, read ~4 times) | ~650 ms |
+
+- **No acceleration structure.** MuJoCo Warp's ray caster tests every ray against every geom.
+  Flat ground is one plane; the stairs are **4049 boxes**.
+- **The LiDAR is wasted on the teacher.** It casts 90 × 16 = 1440 rays per robot. Its map
+  (group `height_noisy`) is only a *student* input, yet the rungs computed it at every step.
+- **No caching.** The ray-cast sensor re-cast on every read of `.data`, and the height
+  scanner is read about 4 times per step: the height observation, `base_height`, the
+  foot-clearance terms and the hack monitor.
+
+**The NaN.** Not reproduced on the CPU: 32-64 robots, random actions, a few thousand
+robot-steps, no NaN. The crash came after ~330,000 robot-steps on terrain, so it is probably
+a rare physics blow-up in one robot. Rewards are already NaN-safe (`nan_to_num` in the reward
+manager), but nothing reset a robot with NaN physics. Its NaN observations went into the
+batch, and one robot is enough to make the whole update NaN. Not proven: the fix below makes
+such a robot visible as `Episode_Termination/nan_state`.
+
+**Fixes:**
+1. **The rungs drop the student LiDAR.** In the repro config: no `height_noisy` group, no
+   `lidar` sensor. The student task builds its own config and keeps both, and a test checks
+   that.
+2. **Ray casts are cached** until a body moves (`mjlab/sensor/raycast_sensor.py`). The
+   terrain is static, so the same body poses give the same hits. The cache key is every
+   body's position and orientation, which is cheap (15 bodies per robot). A test checks that
+   a cached read equals a fresh cast, and that a moved robot gets a new one.
+3. **A robot with NaN/Inf physics is reset** (termination `nan_state`, counted as a fall),
+   so it can't poison the batch.
+
+**Result:** the stairs step went from 2971 to **239 ms** (12×), with identical height-scan
+values. The GPU speed is still to be measured on the next rung 7 run.
+
+**Watch in the rung 7 rerun:**
+- the iteration time;
+- `Episode_Termination/nan_state`: 0 is best, and a few per iteration means the physics
+  blows up but training survives;
+- the noise std.
+
 ### What we are missing: hypotheses, predictions and next rungs (2 Nov, before any batch result)
+
+> **Outcome (added 3 Nov).** None of the hypotheses below was the cause. The collapse was a bug
+> in the environment (the motors weakened at every reset), found by reading the event code
+> while building test T2. See [Root cause](#root-cause-the-motors-weakened-at-every-reset-2-nov).
+> This section is kept unchanged as the record of what was predicted before the results.
+> - Of its tests, T1/T2/T3 were built (`--randomized True`); T4 and T5 were not needed.
+> - Of its rungs, only "seed 2" is still planned, and 7f was dropped (the legs do have
+>   friction).
 
 Written on 2 Nov 2026 while `r5_term100` was still training, before any of the four batch
 results was seen, so the predictions below can't be fitted to them afterwards. Everything here
@@ -1327,6 +1456,18 @@ Bisection (4L/4S) costs about 6 h. Splitting rung 4 into its ~10 items would cos
     the policy side (the fall price, the entropy bonus); reading the event code found it in
     minutes. Check that randomized parameters stay in range after many resets, with a test.
     (Lesson 14 was written before this was known.)
+17. **Profile before guessing, and don't compute what nobody reads.** Rung 7 was 10× slower than
+    flat. The physics was ~2% of a step. ~75% was the student's LiDAR, which the teacher never
+    uses, and most of the rest was the height scanner re-cast ~4 times per step. The ray
+    caster tests every ray against every geom, so 4049 stair boxes made that cost explode.
+18. **One NaN robot can kill the whole run.** The rewards were NaN-safe, but nothing reset a
+    robot whose physics went NaN. One such robot in a batch of 81920 steps makes every
+    gradient NaN. Reset non-finite robots with a termination.
+19. **Check a physics assumption in the compiled model.** "The legs are frictionless
+    (`condim=1`)" was wrong: MuJoCo combines the two geoms of a contact, and the legs grip
+    with μ 1.0. A 10-line check (drop the robot, read the contacts) settled it.
+20. **Watch the units of a progress display.** rsl_rl's ETA is h:m:s and wraps every 24 h.
+    "12:54:48" was 5.5 days.
 
 ## What to watch in a rung run (repro0, 0b, ...)
 

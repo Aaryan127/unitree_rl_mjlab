@@ -407,7 +407,7 @@ def stand_still(
 ##
 # Used by the repro/rung tasks (env_cfgs.unitree_go2_pgtt_repro_env_cfg) and the old
 # teacher task (velocity_env_cfg.make_pgtt_env_cfg). Typical sizes per second, after the
-# weight, are in doc/reward_hacking_runs_1-3.md, "How the reward is computed".
+# weight, are in doc/experiments.md, "How the reward is computed".
 
 
 def track_lin_vel_xy_exp(

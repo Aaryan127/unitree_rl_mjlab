@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Find out why rungs 4 and 5 collapse (doc/reward_hacking_runs_1-3.md, "Rungs 4 and 5
+# Find out why rungs 4 and 5 collapse (doc/experiments.md, "Rungs 4 and 5
 # collapse"): four 1500-iteration runs back to back, each followed by the reward-hacking
 # check, then one table comparing them with rungs 3-5 and rung4_term100.
+#
+# Done (2 Nov): runs 1 and 2 both collapsed, and the cause turned out to be a bug in the
+# effort-limit randomization (doc/experiments.md, "Root cause"). Kept for reference.
 #
 #   bash scripts/diagnose_collapse.sh        # all four (~12 h)
 #   bash scripts/diagnose_collapse.sh 3      # start at the third (after a stop or a crash)

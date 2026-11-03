@@ -10,7 +10,7 @@
 #
 # For PGTT tasks (only_positive_rewards=True in the env config) compute() also clips each
 # step's sum at 0 and adds the `termination` term after the clip. That is the part that
-# decides whether falling can ever pay (doc/reward_hacking_runs_1-3.md, "How the reward
+# decides whether falling can ever pay (doc/experiments.md, "How the reward
 # works here").
 
 from __future__ import annotations  # type hints are not evaluated at runtime

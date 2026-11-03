@@ -35,7 +35,7 @@ every time; after that, jump to what you want to do.
 All commands run **from the repo folder** (the paths like `logs/...` and `scripts/...` are
 relative to it). Installing from zero on a new machine: [doc/setup_en.md](doc/setup_en.md).
 
-What a run must pass, and why: [doc/reward_hacking_runs_1-3.md](doc/reward_hacking_runs_1-3.md).
+What a run must pass, and why: [doc/experiments.md](doc/experiments.md).
 
 ---
 
@@ -153,9 +153,13 @@ own run name.
 | `rung4_term100` | Rung4 | `termination` −100 | by hand |
 | `r5_term100` | Rung5 | `termination` −100 | `diagnose_collapse.sh` (4c) |
 | `r4_ent001` | Rung4 | entropy bonus 0.001 | `diagnose_collapse.sh` |
-| `r5_term100_ent001` | Rung5 | both | `diagnose_collapse.sh` |
-| `r6_term100` | Rung6 | `termination` −100 | `diagnose_collapse.sh` |
-| `teacher_full` | Rung7 | the winning settings, 10000 iterations | by hand (4d) |
+| `r5_term100_ent001` | Rung5 | both | `diagnose_collapse.sh` (never run) |
+| `r6_term100` | Rung6 | `termination` −100 | `diagnose_collapse.sh` (never run) |
+| `rung6_seed2` | Rung6 | `--agent.seed 2` (is rung 6 reliable?) | by hand |
+| `teacher_full` | Rung7 | 10000 iterations, nothing else changed | by hand (4d) |
+
+Runs from before 2 Nov 23:07 (`a21cf12`) with rung 4 or later were trained with the motor bug
+(the motors weakened at every reset). Their results describe the bug, not the setup.
 
 The settings a run really used are in its `params/env.yaml` and `params/agent.yaml`. Old teacher runs (v1-v4, don't walk) are in
 `logs/rsl_rl/go2_pgtt_teacher/`.
@@ -213,8 +217,13 @@ tmux attach -t ladder
   lists `..._rung1_collisions/...` and `..._rung2_delays/...`: run
   `bash scripts/train_ladder.sh 3`.
 - A rung that was interrupted starts again from zero (the half-finished folder stays; ignore it).
+- **Rung 7 again after the terrain fixes (3 Nov):** `git pull`, then
+  `bash scripts/train_ladder.sh 7`. It runs only rung 7 (6000 iterations), then the check.
+  - Check the **Iteration time** in the first boxes: before the fix it was ~80 s.
+  - The **ETA** wraps every 24 h (it prints h:m:s only). So `ETA: 12:54:48` can mean
+    5 days + 12:54. Work it out: iteration time × iterations left.
 - **After the motor fix (2 Nov):** rungs 4+ have to run again, because the old ones were trained with
-  motors that weakened at every reset (`doc/reward_hacking_runs_1-3.md`, "Root cause"). Start at
+  motors that weakened at every reset (`doc/experiments.md`, "Root cause"). Start at
   4: `bash scripts/train_ladder.sh 4`, after a `git pull`. The new run folders get the same names
   with a newer date, and every command here takes the newest.
 
@@ -252,7 +261,7 @@ the run a new name that says what changed.
 | the random seed | `--agent.seed <N>` |
 | number of robots | `--env.scene.num-envs=<N>` (4096 normally; fewer only for a quick test) |
 
-- **`<TERM>`**: a reward name as listed in `doc/reward_hacking_runs_1-3.md`, "How the reward is
+- **`<TERM>`**: a reward name as listed in `doc/experiments.md`, "How the reward is
   computed", **with every `_` written as `-`**: `termination`, `leg-contact`, `base-height`,
   `foot-phase`, `action-acc`. E.g. `--env.rewards.leg-contact.weight=-0.5`.
 - Every other setting works the same way. To find the exact name of one:
@@ -286,21 +295,20 @@ tmux attach -t diag
   Order: 1 `r5_term100`, 2 `r4_ent001`, 3 `r5_term100_ent001`, 4 `r6_term100`. E.g. only
   `..._r5_term100/hacking_check.txt` is listed: `<N>` is 2. Nothing listed: 1.
 - **The table again at any time**, for any runs: section 9d.
-- What each run tests and how to read the result: `doc/reward_hacking_runs_1-3.md`,
+- What each run tests and how to read the result: `doc/experiments.md`,
   "The diagnosis batch".
 
-### 4d. The full teacher (10000 iterations, about a day)
+### 4d. The full teacher (10000 iterations, a day or more)
 
-Only after the diagnosis (4c) says which settings to use (`doc/reward_hacking_runs_1-3.md`,
-"The diagnosis batch", what each outcome means). With `termination` −100:
+Only after rung 7 has passed (4a, `bash scripts/train_ladder.sh 7`). No extra settings: the
+`termination` −100 of the diagnosis is not needed (the collapse was the motor bug).
 ```bash
-tmux new -d -s teacher 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung7-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=10000 --agent.run-name teacher_full --env.rewards.termination.weight=-100; exec bash'
+tmux new -d -s teacher 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung7-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=10000 --agent.run-name teacher_full; exec bash'
 tmux attach -t teacher
 ```
-- If the diagnosis says the entropy bonus must go down too, add
-  `--agent.algorithm.entropy-coef=0.001` before `; exec bash`.
-- ~20 h at 7 s per iteration, maybe more with terrain. A reboot in that time kills it: continue
-  from its last checkpoint (section 6) instead of starting again.
+- How long: 10000 × the iteration time of the rung 7 run. That was 80 s before the terrain
+  fixes; measure it again in rung 7. At ~10 s, it's ~28 h. A reboot in that time kills it:
+  continue from its last checkpoint (section 6) instead of starting again.
 - Watch the curves in the first ~1000 iterations (sections 9c, 9d). If episodes get shorter
   again or the noise std turns up, stop it there rather than waiting a day.
 - When it ends: hack check (section 10) on the last checkpoint, plus once with
@@ -311,8 +319,9 @@ tmux attach -t teacher
 ## 5. Is it running? How far is it?
 
 **Look at it directly:** `tmux ls` to see the session names, then `tmux attach -t <SESSION>`.
-The box at the bottom shows `Learning iteration <done>/<total>`, `Iteration time:` (~7 s is
-normal) and the time left (`ETA`). Leave with **Ctrl+B**, **D** (not Ctrl+C, that stops it).
+The box at the bottom shows `Learning iteration <done>/<total>`, `Iteration time:` (~4-7 s on
+flat ground) and the time left (`ETA`). **The ETA wraps every 24 h**: it prints only h:m:s,
+so `12:54:48` can mean 5 days and 12:54. Work it out instead: iteration time × iterations left. Leave with **Ctrl+B**, **D** (not Ctrl+C, that stops it).
 Scripts print a line starting with `===` at every step (which experiment or rung, when it
 started).
 
@@ -373,7 +382,7 @@ CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py <TAS
   over `model_1500.pt`.
 - It saves into a new folder ending in `_<RUN_NAME>_resumed`.
 - Add the same changed settings the run was started with (4b), e.g.
-  `--env.rewards.termination.weight=-100` for `teacher_full`. They are not taken from the
+  `--env.rewards.termination.weight=-100` for `rung4_term100`. They are not taken from the
   checkpoint.
 
 ---
@@ -649,6 +658,9 @@ It asks for the password once per run. Runs that don't exist yet print an error;
 | `Address already in use` (port 8080 or 6006) on the GPU machine | an old viewer / TensorBoard is still running: find it in your tmux windows and **Ctrl+C** it, or `pkill -f "scripts/play.py"` / `pkill tensorboard` |
 | ladder stopped with `FAILED` | read that rung's `hacking_check.txt` (section 7); the change of that rung (section 3) caused it. Look at it in the viewer before changing anything |
 | a run is much slower than ~7 s per iteration | something else uses the GPU or CPU: `nvidia-smi`, `top` (press `q` to leave) |
+| terrain (rung 7) much slower than flat | ray casts cost the most on terrain (every ray is tested against every terrain box). Before 3 Nov the rungs also computed the student's LiDAR: `git pull` |
+| `Assertion ... expects all elements of std >= 0.0 failed` / `CUDA error: device-side assert triggered` | the policy's noise std became NaN: a robot's physics blew up and poisoned the update. Since 3 Nov the rungs reset such robots (`Episode_Termination/nan_state` counts them): `git pull` and start the run again |
+| `EOFError: Ran out of input` when loading a checkpoint | the file is empty, cut off by a crash. Use the newest non-empty one: `find $RUN -name 'model_*.pt' -size +0 \| sort -V \| tail -1` |
 | **rebooted** during a training | see below |
 
 **The GPU machine rebooted during a training.** A reboot kills every tmux session and the

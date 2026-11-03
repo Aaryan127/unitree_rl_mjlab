@@ -13,7 +13,7 @@ S=Mjlab-Velocity-PGTT-Student-Unitree-Go2      # stage 2: student (distillation)
   `...-Repro-Smooth-...`, then `...-Rung1-...` to `...-Rung7-...` (experiment `go2_pgtt_repro`).
   Set `T` to the rung you work on, e.g. `T=Mjlab-Velocity-PGTT-Rung4-Unitree-Go2`.
 - The old `Mjlab-Velocity-PGTT-Teacher-Unitree-Go2` (`go2_pgtt_teacher`) never walked (runs
-  v1-v4, doc/reward_hacking_runs_1-3.md).
+  v1-v4, doc/experiments.md).
 - **`scripts/pgtt.sh` still uses the old Teacher and Student tasks.** Its `config`, `debug`,
   `smoke` and `teacher` commands show or train the old teacher. For a rung, use the
   `python scripts/...` form with `$T`. The flags and `MJLAB_*` switches below work the same on
@@ -263,6 +263,11 @@ Current groups (`scripts/pgtt.sh config` shows them):
 Sensors: `feet_ground_contact`, `feet_ground_normals`, `leg_ground_contact`,
 `height_scanner`, `lidar`.
 
+**In the ladder tasks (Repro, Rung1-7), `height_noisy` and `lidar` don't exist.** The teacher
+never reads them, and on stairs the LiDAR's rays cost ~75% of the step time
+(doc/experiments.md, "Rung 7"). They exist in the old Teacher task and in the Student task.
+The rungs also end an episode on NaN physics (`nan_state`).
+
 **Drop privileged info** (does the teacher need it?):
 ```bash
 MJLAB_DROP=obs:privileged/foot_friction,obs:privileged/base_external_wrench scripts/pgtt.sh teacher
@@ -316,12 +321,15 @@ MJLAB_DROP=event:actuator_delay,event:pd_gains ...          # no motor randomiza
 Event names: `reset_base`, `reset_robot_joints`, `push_robot`, `external_wrench`,
 `body_friction`, `base_mass`, `base_com`, `pd_gains`, `effort_limits`, `actuator_delay`,
 `link_mass`, `joint_friction`, `joint_armature`, `encoder_bias`.
-Termination names: `time_out`, `fell_over`, and from rung 1 on `body_contact` (trunk or a hip
-on the ground).
+Termination names: `time_out`, `fell_over`, `nan_state` (NaN/Inf physics, every rung), and
+from rung 1 on `body_contact` (trunk or a hip on the ground).
+
+`effort_limits` (and `pd_gains`) now scale the default values at each reset. Before 2 Nov,
+`effort_limits` multiplied the current limit, so the motors faded with every reset.
 
 The events above are the teacher's, used in full from rung 4 on. Rungs 0-3 randomize with PGTT's
 narrower ranges (rung 2 adds the motor delay, rung 3 the two pushes). The table in
-doc/reward_hacking_runs_1-3.md, "Rung 4", shows both sets of ranges.
+doc/experiments.md, "Rung 4", shows both sets of ranges.
 
 If you change the twist ranges, the robot's joystick limits follow (they are exported). The
 deploy gait frequency must stay inside `frequency-range`; export checks this.

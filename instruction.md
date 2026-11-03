@@ -24,15 +24,17 @@ Stage 3  scripts/export_deploy.py                  ONNX + deploy.yaml -> deploy/
 Stage 4  deploy/robots/go2 (C++)                   go2_ctrl on the robot
 ```
 
-**Where it stands (2 Nov 2026):**
+**Where it stands (3 Nov 2026):**
 - The first teacher task, `Mjlab-Velocity-PGTT-Teacher-Unitree-Go2` (`go2_pgtt_teacher`), never
   walked. Four runs found four reward hacks.
 - The teacher is now rebuilt as a ladder:
   - the official PGTT setup, reproduced (`Repro`, walks);
   - then one change at a time (`Rung1` ... `Rung7`); `Rung7` is the full teacher.
-- Rungs 1-3 walk. Rung 4 (wider randomization) collapses after learning to walk; a fix is
-  being tested (`scripts/diagnose_collapse.sh`).
-- Story and results: [doc/reward_hacking_runs_1-3.md](doc/reward_hacking_runs_1-3.md).
+- Rungs 1-6 walk. Rung 6 is the flat-ground teacher. The rung 4/5 collapse was a bug (the
+  motors weakened at every reset), now fixed.
+- Rung 7 (terrain) crashed on its first try (a NaN, and 10× slower). The fixes are written:
+  no student LiDAR in the rungs, cached ray casts, and a reset for NaN robots. It is to run again.
+- Every run, change and result: [doc/experiments.md](doc/experiments.md).
 - Every command for training and checking: [COMMANDS.md](COMMANDS.md).
 - Progress log: [updates.md](updates.md).
 
@@ -102,21 +104,23 @@ command-line weights still work.
 The exact commands, with tmux, run names, times and what to do after a reboot, are in
 [COMMANDS.md](COMMANDS.md) (sections 4-6). In short:
 
-**Stage 1, the teacher.** It is built as a ladder (doc/reward_hacking_runs_1-3.md, "The plan"):
+**Stage 1, the teacher.** It is built as a ladder (doc/experiments.md, "The plan"):
 
-| Task | Run name | What it adds | Status (2 Nov) |
+| Task | Run name | What it adds | Status (3 Nov) |
 |---|---|---|---|
 | `Mjlab-Velocity-PGTT-Repro-Unitree-Go2` | `repro0` | the official PGTT setup (feet-only collisions, PGTT rewards, Brax PPO settings) | walks |
 | `Mjlab-Velocity-PGTT-Repro-Smooth-Unitree-Go2` | `smooth0b` | + penalty on the action's second difference (tremor) | walks |
 | `Mjlab-Velocity-PGTT-Rung1..3-Unitree-Go2` | `rung1_collisions` ... | + full collisions, delays, pushes | walk (slight kneeling) |
-| `Mjlab-Velocity-PGTT-Rung4..5-Unitree-Go2` | `rung4_randomization`, `rung5_rewards` | + our wider randomization, kneel/crouch penalties | collapse; fix being tested |
-| `Mjlab-Velocity-PGTT-Rung6..7-Unitree-Go2` | `rung6_commands`, `rung7_terrain` | + teacher commands, terrain = the full teacher | waiting |
+| `Mjlab-Velocity-PGTT-Rung4..5-Unitree-Go2` | `rung4_randomization`, `rung5_rewards` | + our wider randomization, kneel/crouch penalties | walk (after the motor fix) |
+| `Mjlab-Velocity-PGTT-Rung6-Unitree-Go2` | `rung6_commands` | + teacher commands | walks: the flat-ground teacher |
+| `Mjlab-Velocity-PGTT-Rung7-Unitree-Go2` | `rung7_terrain` | + terrain = the full teacher | crashed, fixed, to run again |
 
 ```bash
 bash scripts/train_ladder.sh            # rungs 1-7 in order, each checked; stops at a HACK
-bash scripts/diagnose_collapse.sh       # the four runs testing the rung 4/5 fix (running now)
+bash scripts/train_ladder.sh 7          # only rung 7 (the next run)
 ```
-The full teacher run (rung 7, 10000 iterations, with the fix) is `COMMANDS.md` 4d. Judge every
+`scripts/diagnose_collapse.sh` (the rung 4/5 diagnosis) is done and kept for reference. The
+full teacher run (rung 7's setup, 10000 iterations) is `COMMANDS.md` 4d. Judge every
 run by `scripts/check_reward_hacking.py` **and** its training curves
 (`scripts/summarize_runs.py`): the check runs without randomization and can miss a collapse.
 

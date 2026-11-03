@@ -8,9 +8,9 @@ same poster. Poster and text follow the
 `Mjlab-Velocity-PGTT-{Teacher,Student}-Unitree-Go2` configuration. `B` below means the
 number of parallel simulated robots.
 
-> **Update, 2 Nov 2026.** The teacher is no longer trained with the `...-Teacher-...` task's
+> **Update, 3 Nov 2026.** The teacher is no longer trained with the `...-Teacher-...` task's
 > rewards. That reward set never produced a walking policy
-> ([reward_hacking_runs_1-3.md](reward_hacking_runs_1-3.md)). It is rebuilt as a ladder:
+> ([experiments.md](experiments.md)). It is rebuilt as a ladder:
 > - the official PGTT setup (`...-Repro-...`), which walks;
 > - one change at a time up to `...-Rung7-...`, which has this page's terrain, sensors,
 >   observations and randomization.
@@ -18,7 +18,9 @@ number of parallel simulated robots.
 > Rung 7 keeps PGTT's reward set: tracking +1 / +0.5, no orientation or joint-power terms,
 > plus `action_acc`, `base_height`, `leg_contact` and `joint_limits`. It also keeps PGTT's PPO
 > settings and measures the foot-phase target from the IMU (stance 0.30 m, apex 0.20 m below
-> it). Network, observation routing, student and export below are unchanged. The poster
+> it). `base_height` charges below 0.265 m (weight −50). The rungs do not compute the
+> student's `height_noisy` LiDAR map, which the teacher never reads; the student task still
+> has it. Network, observation routing, student and export below are unchanged. The poster
 > still shows the old teacher rewards.
 
 ## 1. Task: what is being learned?

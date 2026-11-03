@@ -4,7 +4,7 @@ For each run name it takes the newest logs/rsl_rl/go2_pgtt_repro/*_<name> folder
 its hacking_check.txt (written by train_ladder.sh / diagnose_collapse.sh) and its
 TensorBoard log, and prints one row per run. The curves show what the check can't: the
 check runs without randomization, so a policy that falls apart under it still looks fine
-there (doc/reward_hacking_runs_1-3.md, "Rungs 4 and 5 collapse").
+there (doc/experiments.md, "Rungs 4 and 5 collapse").
 
   python scripts/summarize_runs.py rung3_pushes rung4_randomization r5_term100
 """

@@ -15,7 +15,7 @@ and sim-to-real deployment.
 > 2022). Start here:
 > - [instruction.md](instruction.md): what the branch does and where everything is.
 > - [COMMANDS.md](COMMANDS.md): every command to train, check, watch and copy runs.
-> - [doc/reward_hacking_runs_1-3.md](doc/reward_hacking_runs_1-3.md): how the teacher is
+> - [doc/experiments.md](doc/experiments.md): the experiment log, with every run, change and result, and how the teacher is
 >   built and what each run showed.
 > - [updates.md](updates.md): the progress log.
 >
