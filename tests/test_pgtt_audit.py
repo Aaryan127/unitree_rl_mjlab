@@ -131,6 +131,7 @@ class AuditRegressionTests(unittest.TestCase):
       self.assertNotIn("height_noisy", cfg.observations)
       self.assertFalse(any(s.name == "lidar" for s in cfg.scene.sensors))
       self.assertIn("nan_state", cfg.terminations)
+      self.assertIn("physics_exploded", cfg.terminations)
     self.assertIn("height_noisy", load_env_cfg(TASK).observations)  # the student keeps it
 
   def test_rung7_trains_with_heading_commands(self):
@@ -142,6 +143,25 @@ class AuditRegressionTests(unittest.TestCase):
     self.assertTrue(twist.heading_command)
     self.assertEqual(twist.rel_heading_envs, 0.8)
     self.assertFalse(unitree_go2_pgtt_rung_env_cfg(6).commands["twist"].heading_command)
+
+  def test_physics_exploded_flags_only_the_blown_up_robot(self):
+    from mjlab.envs import ManagerBasedRlEnv
+    from mjlab.tasks.velocity import mdp
+    from mjlab.tasks.velocity.config.go2.env_cfgs import unitree_go2_pgtt_rung_env_cfg
+
+    cfg = unitree_go2_pgtt_rung_env_cfg(6)
+    cfg.scene.num_envs = 3
+    env = ManagerBasedRlEnv(cfg=cfg, device="cpu")
+    try:
+      env.reset()
+      self.assertFalse(mdp.physics_exploded(env).any())
+      robot = env.scene["robot"]
+      vel = robot.data.joint_vel.clone()
+      vel[1, 0] = 500.0  # robot 1's first joint spins at 500 rad/s
+      robot.write_joint_state_to_sim(robot.data.joint_pos.clone(), vel)
+      self.assertEqual(mdp.physics_exploded(env).tolist(), [False, True, False])
+    finally:
+      env.close()
 
   def test_raycast_cache_matches_a_fresh_cast(self):
     from mjlab.envs import ManagerBasedRlEnv

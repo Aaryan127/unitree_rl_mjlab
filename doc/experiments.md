@@ -62,6 +62,7 @@ everything here are in [COMMANDS.md](../COMMANDS.md).
 | 2 Nov | Docs: diagnosis results, the bug, inline comments on the reward code; "legs are frictionless" corrected (they grip with μ 1.0) | | `77080bf` | |
 | 3 Nov | `base_height` target 0.25 → **0.265 m**, weight kept at −50 | make a slight sag cost something without starving early learning | `4bb3280` | applies from rung 7 / the teacher on |
 | 3 Nov | Rungs drop the student LiDAR; ray-cast cache; `nan_state` termination; tests | rung 7: 80 s per iteration, NaN crash | `6da5075` | stairs step 2971 → 239 ms on the CPU; GPU run pending |
+| 4 Nov | `physics_exploded` termination: a joint faster than 100 rad/s or the base faster than 20 m/s ends the episode | rung 7 rerun, iteration 6: some robots' physics blew up without turning NaN (hip angles ~10⁶ rad, `default_pose` −2×10¹³ per episode) | (uncommitted) | the exploded robots get reset instead of feeding garbage into the batch |
 | 3 Nov | Rung 7: heading commands for 80% of the robots (stiffness 0.5) | pre-flight review: with free yaw rates even a perfect walker was promoted by the terrain curriculum in only 52% of episodes | `d437833` | perfect walker promoted 84%, demoted 14% |
 
 ## All runs
@@ -913,6 +914,31 @@ Checked against the built rung 7 config, the official PGTT code and the legged_g
   | a toe hitting a riser during swing | `swing_contact` |
   | a trunk or hip on an edge | `body_contact` ends the episode |
   | a robot that blows up | `nan_state` |
+
+**First result of the rerun (4 Nov, iteration 6):**
+- **Speed: fixed.** 9.26 s per iteration (was 80 s), so 6000 iterations take ~15.5 h. `nan_state` 0,
+  `terrain_levels` 1.60.
+- **New problem: robots whose physics blows up but stays finite.** In the log:
+
+  | Term | Value per episode |
+  |---|---|
+  | `default_pose` | −1.96×10¹³ |
+  | `ang_vel_xy` | −807,313 |
+  | `lin_vel_z` | −98,855 |
+  | `joint_limits` | −13,952 |
+
+  `speed_ratio` was −5.1. `default_pose` only weighs the hips, so some hip joints had spun to
+  ~10⁶ rad. A robot like that is neither NaN nor fallen over, so it lives for the full 20 s.
+  Its step reward is clipped at 0, but its absurd observations go into the batch. This is the
+  likely road to the NaN of the first attempt.
+- **Where:** on the laptop CPU (96 robots, 60 steps, random actions), one robot reached
+  115 rad/s, on a `waves` tile. Flat, stairs and rough stayed below ~16 rad/s.
+- **Fix:** the termination `physics_exploded` (`mdp/terminations.py`) ends the episode of a robot
+  whose joint is faster than 100 rad/s (the motors top out near 30) or whose base is faster than
+  20 m/s. The reset clears its whole physics state. It is counted as
+  `Episode_Termination/physics_exploded`; if that stays high (well above ~0.1), find the cause
+  (solver iterations, contact buffers, heightfield contacts) instead of only resetting.
+  Test: `test_physics_exploded_flags_only_the_blown_up_robot`.
 
 **3. To watch in the run (not fixable before it):**
 

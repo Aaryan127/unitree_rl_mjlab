@@ -497,6 +497,9 @@ def unitree_go2_pgtt_repro_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # NaN into the batch, where one robot poisons the whole update (rung 7 crashed at
   # iteration 4 with a NaN noise std).
   cfg.terminations["nan_state"] = TerminationTermCfg(func=mdp.nan_detection)
+  # Same for a robot whose physics blew up without turning NaN (rung 7 on GPU: hip angles of
+  # ~1e6 rad, rewards of -1e13): joints faster than 100 rad/s or the base faster than 20 m/s.
+  cfg.terminations["physics_exploded"] = TerminationTermCfg(func=mdp.physics_exploded)
 
   # Commands: uniform in [-1, 1], each axis non-zero with probability (0.9, 0.25, 0.5),
   # resampled every ~5 s.
