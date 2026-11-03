@@ -8,6 +8,25 @@ References:
   https://github.com/isaac-sim/IsaacLab/blob/main/source/isaaclab/isaaclab/terrains/trimesh/mesh_terrains.py
 """
 
+# How to add your own structure here
+# ----------------------------------
+# One tile kind = one @dataclass(kw_only=True) class that subclasses SubTerrainCfg, with its
+# settings as fields and one method:
+#   def function(self, difficulty, spec, rng) -> TerrainOutput
+# - difficulty: from 0 to 1, low on row 0 and high on the last row (row r gets
+#   (r + a random 0-1) / num_rows; terrain_generator.py). Scale your heights with it, e.g.
+#   h = lo + difficulty * (hi - lo), so the curriculum can make it harder.
+# - Build shapes with body = spec.body("terrain"), then body.add_geom(type=mjGEOM_BOX,
+#   size=(half_x, half_y, half_z), pos=(x, y, z)). The coordinates are the TILE's: its corner
+#   is (0, 0), its far corner self.size. The generator moves the tile into place.
+# - Return TerrainOutput(origin=..., geometries=[TerrainGeometry(geom=g, color=rgba), ...]).
+#   `origin` is where robots spawn: put it on top of your structure, never inside a box.
+#   Anything you don't build is empty: a gap with no floor under it is a hole down to the
+#   bottom of the terrain, so add a floor box below if the robot must be able to step out.
+# Copy BoxFlatTerrainCfg (the simplest) or BoxPyramidStairsTerrainCfg (difficulty-scaled
+# boxes) as a starting point. Then export it in mjlab/terrains/__init__.py and add it to a
+# recipe in mjlab/terrains/config.py.
+
 from __future__ import annotations
 
 from dataclasses import dataclass

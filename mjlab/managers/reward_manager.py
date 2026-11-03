@@ -12,6 +12,11 @@
 # step's sum at 0 and adds the `termination` term after the clip. That is the part that
 # decides whether falling can ever pay (doc/experiments.md, "How the reward
 # works here").
+#
+# How to change it: you normally don't. Weights and terms are set in the env config, not here.
+# Change this file only to change how the terms are COMBINED: the clip at 0
+# (only_positive_rewards), where the termination term is added, or the per-episode logging.
+# Every task uses it, so a change here changes all of them.
 
 from __future__ import annotations  # type hints are not evaluated at runtime
 

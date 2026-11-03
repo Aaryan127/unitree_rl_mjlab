@@ -1,3 +1,15 @@
+# What this file is for, and how to change it
+# --------------------------------------------
+# Builds the terrain grid from a recipe (mjlab/terrains/config.py): picks a tile kind per
+# column by `proportion`, gives each row its difficulty, places every tile and records each
+# tile's spawn point (`origin`), which the curriculum uses to move robots between rows.
+# - With curriculum=True (rung 7), row r gets difficulty (r + a random 0-1) / num_rows, then
+#   mapped into difficulty_range ((0, 1) unless a recipe sets it). With curriculum=False, every
+#   tile gets a random difficulty in difficulty_range.
+# - SubTerrainCfg (below) is the base class every tile kind subclasses.
+# You rarely change this file. Change the recipe in config.py, or add a tile kind in
+# primitive_terrains.py or heightfield_terrains.py.
+
 from __future__ import annotations
 
 import abc

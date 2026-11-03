@@ -1,3 +1,29 @@
+# What this file is for, and how to change it
+# --------------------------------------------
+# The terrain RECIPES: which kinds of ground tiles are in the training world and how often.
+# - PGTT_MIXED_TERRAINS_CFG (built at the bottom from PGTT_STAIRS_TERRAINS_CFG) is what rung 7
+#   and the teacher train on: flat, 4 stair types, random_rough, 2 slopes, waves.
+# - The grid: size=(8.0, 8.0) m per tile, num_rows=10 difficulty levels (row 0 easiest),
+#   num_cols=20 tiles per level, border_width around the whole grid.
+# - How often a kind appears: its `proportion`. They don't need to add up to 1 (the generator
+#   rescales them).
+# - How hard it gets: each kind's range, e.g. step_height_range=(0.01, 0.13) m for the stairs
+#   (_PGTT_STAIRS_HEIGHT). Each row gets a difficulty from 0 to 1: row r gets
+#   (r + a random 0-1) / num_rows (terrain_generator.py), and a tile uses
+#   low + difficulty x (high - low). So the top row's stairs are 12-13 cm, row 0's 1-2 cm.
+#   random_rough ignores the difficulty: it is equally rough (noise_range) on every row.
+# - More levels: num_rows (10). The robots start on rows 0-max_init_terrain_level (3, set in
+#   velocity_env_cfg.py). More rows or columns means more tiles, more boxes, slower ray casts.
+# - A new kind of tile: write its class in primitive_terrains.py (boxes) or
+#   heightfield_terrains.py (a height grid), export it in mjlab/terrains/__init__.py, then add
+#   "<name>": terrain_gen.<YourCfg>(proportion=...) to the recipe here. For rung 7 and the
+#   teacher only: inside `PGTT_MIXED_TERRAINS_CFG.sub_terrains.update({` at the bottom. Added to
+#   PGTT_STAIRS_TERRAINS_CFG's sub_terrains instead, it is in both (mixed is copied from it).
+# - Watch it: the viewer of any rung 7 run (COMMANDS.md 4e), or play.py with --terrain mixed.
+# Every terrain box costs ray-cast time (each height-scan ray is tested against every box):
+# prefer a few large boxes over many small ones. Changing the recipe changes the experiment:
+# give the run its own name and note it in doc/experiments.md.
+
 from copy import deepcopy
 
 import mujoco

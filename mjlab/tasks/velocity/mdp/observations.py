@@ -1,3 +1,16 @@
+# What this file is for, and how to change it
+# --------------------------------------------
+# Observation functions: each returns one tensor per robot ([B, ...]). Which ones the policy,
+# critic and student actually get is set in velocity_env_cfg.py (make_pgtt_env_cfg,
+# `observations = {`). height_scan is the teacher's clean 11 x 9 map, lidar_height_map the
+# student's (not computed in the ladder), the rest are privileged sim-only values.
+# - A new observation: write the function here, add an ObservationTermCfg to a group there.
+#   Adding to `policy` (or `proprio_history`, `height`, `privileged`, `critic`) changes a
+#   network's input size, so old checkpoints no longer load or resume. Only `policy` has to
+#   come from the real robot: after that change, re-export (scripts/export_deploy.py) and
+#   update the robot side. For the ladder only, add the term in config/go2/env_cfgs.py
+#   (cfg.observations["<group>"].terms["<name>"] = ObservationTermCfg(...)).
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

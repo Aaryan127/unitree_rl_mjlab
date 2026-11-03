@@ -8,6 +8,22 @@ References:
   https://github.com/isaac-sim/IsaacLab/blob/main/source/isaaclab/isaaclab/terrains/height_field/hf_terrains.py
 """
 
+# What this file is for, and how to change it
+# --------------------------------------------
+# Tile kinds built as a heightfield: a grid of heights, one cell every horizontal_scale
+# (0.1 m), stored in steps of vertical_scale (0.005 m). Good for smooth or noisy ground; boxes
+# (primitive_terrains.py) are better for sharp edges like stairs.
+# - HfRandomUniformTerrainCfg: the "random_rough" ground. Each cell gets a random height in
+#   noise_range (PGTT mix: 0-5 cm), in steps of noise_step. It ignores the difficulty, so it is
+#   equally rough on every curriculum row. To make it grow with the row, the code must change
+#   HERE: scale the noise by `difficulty` in its function().
+# - HfPyramidSlopedTerrainCfg: slopes up/down (slope_range, scaled by difficulty).
+# - HfWaveTerrainCfg: waves (amplitude_range, scaled by difficulty).
+# To change the size of the bumps, slopes or waves (not how they scale), edit their ranges in
+# mjlab/terrains/config.py. A new heightfield kind: copy one of these classes, fill the height
+# array in function(), export it in mjlab/terrains/__init__.py and add it to a recipe in
+# config.py.
+
 import uuid
 from dataclasses import dataclass
 

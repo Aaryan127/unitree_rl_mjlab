@@ -15,6 +15,42 @@
 #   unitree_go2_pgtt_repro_env_cfg                 rung 0: the official PGTT setup, walks
 #   unitree_go2_pgtt_repro_smooth_env_cfg          rung 0b: + a tremor penalty
 #   unitree_go2_pgtt_rung_env_cfg(rung)            rungs 1-7: + one teacher change each
+#
+# How to change it (the file you edit most)
+# ----------------------------------------
+# Words: the "ladder" is rung 0 (the official PGTT setup) plus rungs 1-7, each adding one change
+# towards the full "teacher" (the policy with privileged sim-only inputs; the deployable
+# "student" learns from it later). "Events" are resets and randomization; the "curriculum"
+# changes the task during training. Details: doc/experiments.md and CODE_GUIDE.md.
+#
+# Everything the ladder trains with starts in unitree_go2_pgtt_repro_env_cfg (rung 0) and is
+# inherited by every rung above it. unitree_go2_pgtt_rung_env_cfg then adds one block per rung
+# (`if rung >= 1:` ... `if rung >= 7:`); a later block can overwrite what an earlier one set.
+# - A reward weight, for every rung: edit its RewardTermCfg(weight=...) in the `cfg.rewards = {`
+#   dict of unitree_go2_pgtt_repro_env_cfg.
+# - The three rung 5+ terms (base_height -50, leg_contact -0.25, joint_limits -1) exist only
+#   from rung 5 on. The `if rung >= 5:` block takes them, as objects, from the teacher config
+#   (velocity_env_cfg.py). To change one for the ladder only, add a line AFTER that loop,
+#   e.g. cfg.rewards["leg_contact"].weight = -0.5.
+# - A weight for ONE run only, without editing code: add --env.rewards.<name>.weight=<value>
+#   to the scripts/train.py command (COMMANDS.md 4b), e.g. for rung 7:
+#     python scripts/train.py Mjlab-Velocity-PGTT-Rung7-Unitree-Go2 ... \
+#       --env.rewards.leg-contact.weight=-0.5
+#   In the reward's name, underscores become dashes (leg_contact -> leg-contact); the rest of
+#   the flag stays as written. A negative value needs the `=`.
+# - A new reward: write the function in mdp/rewards.py, then add
+#   cfg.rewards["<name>"] = RewardTermCfg(func=mdp.<name>, weight=<w>, params={...}) here,
+#   in rung 0 (all rungs) or inside the rung block that needs it.
+# - Randomization ranges (friction, mass, Kp/Kd, motor strength): rung 0-3 use the PGTT values
+#   set in the "Events" part of unitree_go2_pgtt_repro_env_cfg; rung 4+ use the teacher's,
+#   defined in velocity_env_cfg.py (make_pgtt_env_cfg, `events = {`). To change one for the
+#   ladder only, add a line after `cfg.events.update(teacher.events)` in the `if rung >= 4:`
+#   block, e.g. cfg.events["body_friction"].params["ranges"] = (0.2, 1.4).
+# - Terrain: rung 7 copies teacher.scene.terrain, which is mjlab/terrains/config.py's
+#   PGTT_MIXED_TERRAINS_CFG. Change the mix there, not here.
+# - Robot gains, collisions, motor delay: the robot blocks (rung 0, rung 1-2 blocks).
+# After any change: a new rung or run name, so old and new results stay apart, and a line in
+# doc/experiments.md.
 
 import math
 from dataclasses import replace  # copy of a dataclass with some fields changed

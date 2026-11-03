@@ -4,6 +4,30 @@ This module provides a factory function to create a base velocity task config.
 Robot-specific configurations call the factory and customize as needed.
 """
 
+# What this file is for, and how to change it
+# --------------------------------------------
+# The base recipe every velocity task starts from. Two factory functions:
+# - make_velocity_env_cfg: the stock mjlab task (not used by PGTT).
+# - make_pgtt_env_cfg: the PGTT base. The Go2 configs (config/go2/env_cfgs.py) and so every
+#   rung start from it. It defines, in this order:
+#   * observation groups (`observations = {`): what the policy, the critic and the student see.
+#     Changing the `policy` group changes what the real robot must provide: re-export after it.
+#   * commands (`commands = {`): velocity ranges, how often a new command comes, standing robots.
+#   * events (`events = {`): resets, pushes and every domain randomization range. Rung 4+ use
+#     these ranges as they are written here.
+#   * rewards (`rewards = {`): the OLD teacher's reward set. The ladder does not use it, except
+#     the three terms rung 5 copies (base_height, leg_contact, joint_limits), so a change to
+#     those three here reaches rungs 5-7.
+#   * terminations (`terminations = {`): what ends an episode (time-out, falling over).
+#   * curriculum (`curriculum = {`): the terrain levels and the penalty ramps.
+#   * scene and sim (`terrain=TerrainImporterCfg(` and `sim=SimulationCfg(`): the terrain mix
+#     (from mjlab/terrains/config.py), the starting level, physics step, contact buffers
+#     (nconmax/njmax), episode length.
+# To change one of these for every PGTT task (old teacher, ladder rungs that copy it, student):
+# edit it here. For the ladder only, override it in config/go2/env_cfgs.py instead (its guide
+# says where), so the old teacher and the student keep theirs. The starting terrain level is
+# max_init_terrain_level in `terrain=TerrainImporterCfg(` (3: robots start on rows 0-3).
+
 import math
 from dataclasses import replace
 

@@ -1,5 +1,19 @@
 """Unitree Go2 constants."""
 
+# What this file is for, and how to change it
+# --------------------------------------------
+# The Go2 itself: the model file (MJCF), the motor model (GO2_ACTUATOR_GO2HV: torque limit
+# 23.5 Nm, armature 0.01), the standing pose and start height (INIT_STATE), and which parts
+# can touch the ground (FEET_ONLY_COLLISION for rung 0, FULL_COLLISION from rung 1).
+# - The ladder overrides the gains (Kp 40, Kd 0.5) and the motor delay in
+#   config/go2/env_cfgs.py, so change those there.
+# - Collisions: a contact between two geoms uses the larger condim and friction of the two
+#   (unless one has a higher priority), so the condim=1 legs still grip the condim=3 terrain
+#   with mu 1.0 (doc/experiments.md, Lesson 19).
+# Changing the robot here changes every Go2 task, the old teacher and the student included.
+# A new standing pose (INIT_STATE) also changes the default joint angles the actions are
+# relative to: re-export (scripts/export_deploy.py), since deploy.yaml is generated from it.
+
 from pathlib import Path
 
 import mujoco

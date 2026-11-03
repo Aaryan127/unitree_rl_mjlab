@@ -1,3 +1,15 @@
+# What this file is for, and how to change it
+# --------------------------------------------
+# Curriculum terms: rules that change the task while training, run at each robot's reset.
+# - terrain_levels_vel (rung 7): moves a robot one row up when it ended more than half a tile
+#   from its start (size[0] / 2, so 4 m for 8 m tiles: it follows the tile size), one row down
+#   when it covered less than half of |command| x episode time. Change these rules here. Their
+#   effect depends on the commands: with free yaw rates even perfect walking circles back
+#   (doc/experiments.md, "Pre-flight review").
+# - commands_vel: widens the command ranges in stages. reward_weight / reward_weight_ramp:
+#   change a reward's weight over training (the ladder uses none).
+# Which terms run is set in the env config's `curriculum = {` dict.
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypedDict, cast

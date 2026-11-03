@@ -12,6 +12,23 @@ from __future__ import annotations
 # down: the terms written for this branch, which the PGTT tasks and the ladder use.
 # Shapes in comments: [B] per robot, [B, L] per robot and leg (L = 4), [B, N] per robot
 # and height-scan ray (N = 99).
+#
+# How to change a reward
+# ----------------------
+# - Its weight: not here. Weights live in the env config: config/go2/env_cfgs.py for the
+#   ladder, except base_height, leg_contact and joint_limits, which rung 5+ take from
+#   velocity_env_cfg.py (env_cfgs.py's guide says how to override them). For one run:
+#   --env.rewards.<name>.weight=<value> on scripts/train.py.
+# - What it measures: edit its function here. Every task that uses that term changes with it,
+#   so check `grep -rn "mdp.<function>" mjlab/tasks` first.
+# - A new term: write `def my_term(env: ManagerBasedRlEnv, <params>) -> torch.Tensor:` that
+#   returns one value per robot ([B]), positive for "good". Use a class with __init__ and
+#   __call__ (like foot_phase_tracking_body) if it needs set-up once, e.g. finding body ids.
+#   Then register it in the env config: RewardTermCfg(func=mdp.my_term, weight=..., params=...).
+#   (Functions defined here are visible as mdp.<name> through mdp/__init__.py.)
+# - Before training with a new term, ask "what is the cheapest behaviour that maximizes it?"
+#   (doc/experiments.md, Lessons 1-2): standing, kneeling and vibrating should score below
+#   walking. scripts/check_reward_hacking.py shows afterwards what the robot really did.
 
 import math
 from typing import TYPE_CHECKING

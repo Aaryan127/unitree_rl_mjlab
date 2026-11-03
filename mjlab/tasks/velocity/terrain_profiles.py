@@ -1,5 +1,13 @@
 """Deployment-surface selection shared by training, play and evaluation."""
 
+# What this file is for, and how to change it
+# --------------------------------------------
+# The --terrain switch of play.py and check_reward_hacking.py (and train.py): "flat" (a plane),
+# "stairs" (PGTT_STAIRS_TERRAINS_CFG), "rough" (only flat/random_rough/slopes/waves from the
+# mixed recipe) or "mixed" (PGTT_MIXED_TERRAINS_CFG). It swaps the terrain of a config and
+# keeps its grid settings. It does not decide what a rung trains on: that is the rung's config.
+# A new profile: add its name to TerrainProfile and an `if profile == ...` branch.
+
 from copy import deepcopy
 from typing import Literal
 
