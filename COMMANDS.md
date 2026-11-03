@@ -172,6 +172,14 @@ All on the **GPU machine**, inside tmux (section 2), in the repo with the venv a
 One training at a time: two at once both run at half speed or run out of GPU memory. Check
 first that nothing is training: `nvidia-smi` (section 5).
 
+**The machine is shared** (same `manas` account). Other people's runs show up in `nvidia-smi` as
+`python` on GPU 1 too. On 3 Nov, Chirag's `Unitree-Go2-Flat` run (from
+`/mnt/ubuntu/chirag/marl_quadruped`) used 1.3 GB, which was enough to push rung 7 out of memory.
+- Whose is a process: `ps -fp <PID>` and `ls -l /proc/<PID>/cwd`.
+- **Don't kill someone else's run.** Agree on GPU time instead.
+- To start yours as soon as theirs ends:
+  `while kill -0 <PID> 2>/dev/null; do sleep 60; done; nvidia-smi; <YOUR COMMAND>`.
+
 **How long:** about **7 s per iteration** on the 3070, so **~2 h per 1000 iterations** (1500
 take ~3 h). The box printed after each iteration shows `Iteration time:` and the time left
 (`ETA:`). Much slower than 7 s (e.g. 20 s) means something else is using the machine.
@@ -314,6 +322,146 @@ tmux attach -t teacher
   again or the noise std turns up, stop it there rather than waiting a day.
 - When it ends: hack check (section 10) on the last checkpoint, plus once with
   `--terrain stairs`, then `eval_gait.py` (section 11).
+
+### 4e. Every run: start it, watch it (GPU machine)
+
+Copy-paste commands for each run, with nothing to fill in. **One training at a time**: check
+`nvidia-smi` first (section 5). Every *start* line makes a tmux session `train`. If one
+already exists, `tmux kill-session -t train` (only if nothing in it still trains). Every
+*watch* line takes the newest checkpoint of the newest folder with that run name, and opens
+the viewer at **http://localhost:8080** (ssh with `-L 8080:...`, section 1). **Ctrl+C**
+stops it. Run the watch lines in a free tmux window (**Ctrl+B**, **C**) after
+`cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && source .venv/bin/activate`.
+
+**`repro0`**: rung 0: the official PGTT setup, flat. Done, walks.
+```bash
+# start
+tmux new -d -s train 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Repro-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=3000 --agent.run-name repro0; exec bash'
+tmux attach -t train
+# watch
+RUN=$(ls -d logs/rsl_rl/go2_pgtt_repro/*_repro0 | tail -1); CKPT=$(ls $RUN/model_*.pt | sort -V | tail -1); echo $CKPT
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/play.py Mjlab-Velocity-PGTT-Repro-Unitree-Go2 --checkpoint-file $CKPT --num-envs 1 --viewer viser
+```
+
+**`smooth0b`**: rung 0b: + the tremor penalty. Done, walks.
+```bash
+# start
+tmux new -d -s train 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Repro-Smooth-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=1500 --agent.run-name smooth0b; exec bash'
+tmux attach -t train
+# watch
+RUN=$(ls -d logs/rsl_rl/go2_pgtt_repro/*_smooth0b | tail -1); CKPT=$(ls $RUN/model_*.pt | sort -V | tail -1); echo $CKPT
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/play.py Mjlab-Velocity-PGTT-Repro-Smooth-Unitree-Go2 --checkpoint-file $CKPT --num-envs 1 --viewer viser
+```
+
+**`rung1_collisions`**: + full-body collisions. Done, WARN.
+```bash
+# start
+tmux new -d -s train 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung1-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=1500 --agent.run-name rung1_collisions; exec bash'
+tmux attach -t train
+# watch
+RUN=$(ls -d logs/rsl_rl/go2_pgtt_repro/*_rung1_collisions | tail -1); CKPT=$(ls $RUN/model_*.pt | sort -V | tail -1); echo $CKPT
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/play.py Mjlab-Velocity-PGTT-Rung1-Unitree-Go2 --checkpoint-file $CKPT --num-envs 1 --viewer viser
+```
+
+**`rung2_delays`**: + motor and sensor delays. Done, WARN.
+```bash
+# start
+tmux new -d -s train 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung2-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=1500 --agent.run-name rung2_delays; exec bash'
+tmux attach -t train
+# watch
+RUN=$(ls -d logs/rsl_rl/go2_pgtt_repro/*_rung2_delays | tail -1); CKPT=$(ls $RUN/model_*.pt | sort -V | tail -1); echo $CKPT
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/play.py Mjlab-Velocity-PGTT-Rung2-Unitree-Go2 --checkpoint-file $CKPT --num-envs 1 --viewer viser
+```
+
+**`rung3_pushes`**: + pushes. Done, WARN.
+```bash
+# start
+tmux new -d -s train 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung3-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=1500 --agent.run-name rung3_pushes; exec bash'
+tmux attach -t train
+# watch
+RUN=$(ls -d logs/rsl_rl/go2_pgtt_repro/*_rung3_pushes | tail -1); CKPT=$(ls $RUN/model_*.pt | sort -V | tail -1); echo $CKPT
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/play.py Mjlab-Velocity-PGTT-Rung3-Unitree-Go2 --checkpoint-file $CKPT --num-envs 1 --viewer viser
+```
+
+**`rung4_randomization`**: + wide randomization. Done (motor fix), WARN.
+```bash
+# start
+tmux new -d -s train 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung4-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=1500 --agent.run-name rung4_randomization; exec bash'
+tmux attach -t train
+# watch
+RUN=$(ls -d logs/rsl_rl/go2_pgtt_repro/*_rung4_randomization | tail -1); CKPT=$(ls $RUN/model_*.pt | sort -V | tail -1); echo $CKPT
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/play.py Mjlab-Velocity-PGTT-Rung4-Unitree-Go2 --checkpoint-file $CKPT --num-envs 1 --viewer viser
+```
+
+**`rung5_rewards`**: + anti-kneeling rewards. Done (motor fix), WARN.
+```bash
+# start
+tmux new -d -s train 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung5-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=1500 --agent.run-name rung5_rewards; exec bash'
+tmux attach -t train
+# watch
+RUN=$(ls -d logs/rsl_rl/go2_pgtt_repro/*_rung5_rewards | tail -1); CKPT=$(ls $RUN/model_*.pt | sort -V | tail -1); echo $CKPT
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/play.py Mjlab-Velocity-PGTT-Rung5-Unitree-Go2 --checkpoint-file $CKPT --num-envs 1 --viewer viser
+```
+
+**`rung6_commands`**: + the teacher's commands: **the flat-ground teacher**. Done, WARN.
+```bash
+# start
+tmux new -d -s train 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung6-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=1500 --agent.run-name rung6_commands; exec bash'
+tmux attach -t train
+# watch
+RUN=$(ls -d logs/rsl_rl/go2_pgtt_repro/*_rung6_commands | tail -1); CKPT=$(ls $RUN/model_*.pt | sort -V | tail -1); echo $CKPT
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/play.py Mjlab-Velocity-PGTT-Rung6-Unitree-Go2 --checkpoint-file $CKPT --num-envs 1 --viewer viser
+```
+
+**`rung6_seed2`**: rung 6 again with another seed: is rung 6 reliable? To run.
+```bash
+# start
+tmux new -d -s train 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung6-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=1500 --agent.run-name rung6_seed2 --agent.seed 2; exec bash'
+tmux attach -t train
+# watch
+RUN=$(ls -d logs/rsl_rl/go2_pgtt_repro/*_rung6_seed2 | tail -1); CKPT=$(ls $RUN/model_*.pt | sort -V | tail -1); echo $CKPT
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/play.py Mjlab-Velocity-PGTT-Rung6-Unitree-Go2 --checkpoint-file $CKPT --num-envs 1 --viewer viser
+```
+
+**`rung7_terrain`**: + terrain (50% stairs). **Next.** Better started with the ladder script (4a: `bash scripts/train_ladder.sh 7`), which also runs the check.
+```bash
+# start
+tmux new -d -s train 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung7-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=6000 --agent.run-name rung7_terrain; exec bash'
+tmux attach -t train
+# watch
+RUN=$(ls -d logs/rsl_rl/go2_pgtt_repro/*_rung7_terrain | tail -1); CKPT=$(ls $RUN/model_*.pt | sort -V | tail -1); echo $CKPT
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/play.py Mjlab-Velocity-PGTT-Rung7-Unitree-Go2 --checkpoint-file $CKPT --num-envs 1 --viewer viser --terrain stairs
+```
+- Without `--terrain stairs` it shows the mixed terrain. `--terrain rough` and `--terrain flat` also work.
+
+**`teacher_full`**: the teacher: rung 7 for 10000 iterations. Only after rung 7 passes.
+```bash
+# start
+tmux new -d -s train 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung7-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=10000 --agent.run-name teacher_full; exec bash'
+tmux attach -t train
+# watch
+RUN=$(ls -d logs/rsl_rl/go2_pgtt_repro/*_teacher_full | tail -1); CKPT=$(ls $RUN/model_*.pt | sort -V | tail -1); echo $CKPT
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/play.py Mjlab-Velocity-PGTT-Rung7-Unitree-Go2 --checkpoint-file $CKPT --num-envs 1 --viewer viser --terrain stairs
+```
+- Without `--terrain stairs` it shows the mixed terrain. `--terrain rough` and `--terrain flat` also work.
+
+**`student`**: stage 2, distills a teacher into the deployable student. Only after `teacher_full`.
+The student task is built separately from the rungs, so first check that it loads a rung-7
+teacher: start it and see that the first iteration box appears.
+```bash
+# start (TEACHER = the teacher checkpoint to distill)
+TEACHER=$(ls $(ls -d logs/rsl_rl/go2_pgtt_repro/*_teacher_full | tail -1)/model_*.pt | sort -V | tail -1); echo $TEACHER
+tmux new -d -s train "cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Student-Unitree-Go2 --env.scene.num-envs=4096 --agent.run-name student --teacher-checkpoint $TEACHER; exec bash"
+tmux attach -t train
+# watch
+RUN=$(ls -d logs/rsl_rl/go2_pgtt_student/*_student | tail -1); CKPT=$(ls $RUN/model_*.pt | sort -V | tail -1); echo $CKPT
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/play.py Mjlab-Velocity-PGTT-Student-Unitree-Go2 --checkpoint-file $CKPT --num-envs 1 --viewer viser --terrain stairs
+```
+- The student command uses double quotes, so `$TEACHER` is filled in before tmux starts.
+
+**Starting a run again with the same name** makes a new folder with a newer date. The watch
+lines take the newest. For an older one: `ls -d logs/rsl_rl/go2_pgtt_repro/*_<RUN_NAME>` and
+set `RUN=` to that folder by hand.
 
 ---
 
@@ -647,7 +795,7 @@ It asks for the password once per run. Runs that don't exist yet print an error;
 | `cd: no such file or directory: /mnt/sdb1/...` | after a reboot the disk is only at `/mnt/ubuntu`: run the first line of section 1 |
 | `python: command not found` / `No module named mjlab` | venv not active: `source .venv/bin/activate` in the repo folder (laptop: use `.venv/bin/python`) |
 | `no kernel image is available for execution on the device` | ran on a GTX 1080: put `CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1` in front |
-| `CUDA out of memory` | another training or viewer is using the 3070: `nvidia-smi` shows it; stop it first |
+| `CUDA out of memory` / `Graph launch error: Warp CUDA error 2: out of memory` | another training, viewer or check is holding the 3070. On 3 Nov rung 7 failed this way twice (16:55, 17:34): someone else's run was using 1.3 GB. Rung 7 at 4096 robots needs nearly all 8 GB. `nvidia-smi` lists the processes; stop the leftovers with `pkill -f scripts/play.py; pkill -f scripts/check_reward_hacking.py`, or `kill <PID>`. Check that the 3070's memory is near 0, then start again. If the process is someone else's, see "The machine is shared" in section 4 |
 | `Unknown task` / task name not accepted | typo, or the code is old: `git pull`, then check the name with `grep task_id mjlab/tasks/velocity/config/go2/__init__.py` |
 | `duplicate session: ...` | `tmux attach -t <name>`, or pick another name |
 | `no server running on /tmp/tmux-...` | no tmux session exists: the machine most likely rebooted. See "rebooted" below |

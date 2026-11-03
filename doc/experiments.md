@@ -35,7 +35,8 @@ everything here are in [COMMANDS.md](../COMMANDS.md).
   2. ray casts are cached;
   3. a robot with NaN physics is reset.
 
-  Stairs step time: 2971 → 239 ms.
+  Stairs step time: 2971 → 239 ms. A pre-flight review then found that the terrain
+  curriculum would barely promote anyone. Fixed with heading commands (`d437833`).
 - **Next:**
   1. seed 2 of rung 6 (is rung 6 reliable?);
   2. rung 7 again (`bash scripts/train_ladder.sh 7`);
@@ -61,7 +62,7 @@ everything here are in [COMMANDS.md](../COMMANDS.md).
 | 2 Nov | Docs: diagnosis results, the bug, inline comments on the reward code; "legs are frictionless" corrected (they grip with μ 1.0) | | `77080bf` | |
 | 3 Nov | `base_height` target 0.25 → **0.265 m**, weight kept at −50 | make a slight sag cost something without starving early learning | `4bb3280` | applies from rung 7 / the teacher on |
 | 3 Nov | Rungs drop the student LiDAR; ray-cast cache; `nan_state` termination; tests | rung 7: 80 s per iteration, NaN crash | `6da5075` | stairs step 2971 → 239 ms on the CPU; GPU run pending |
-| 3 Nov | Rung 7: heading commands for 80% of the robots (stiffness 0.5) | pre-flight review: with free yaw rates even a perfect walker was promoted by the terrain curriculum in only 52% of episodes | (this commit) | perfect walker promoted 84%, demoted 14% |
+| 3 Nov | Rung 7: heading commands for 80% of the robots (stiffness 0.5) | pre-flight review: with free yaw rates even a perfect walker was promoted by the terrain curriculum in only 52% of episodes | `d437833` | perfect walker promoted 84%, demoted 14% |
 
 ## All runs
 
@@ -947,7 +948,7 @@ Checked against the built rung 7 config, the official PGTT code and the legged_g
 | 5 again, with the motor fix (`2026-11-03_01-00-05`) | finished, **WARN** (the old run: HACK) |
 | 6 commands (`2026-11-03_02-53-15`) | finished, **WARN**: the flat-ground teacher, everything but terrain |
 | 7 terrain (`2026-11-03_05-00-35`) | **crashed at iteration 4**: NaN noise std, and 80 s per iteration. Fixed, to run again: see [Rung 7: the crash and the slowness](#rung-7-the-crash-and-the-slowness-3-nov) |
-| rung 7 again | to run with the terrain fixes (`bash scripts/train_ladder.sh 7`) |
+| rung 7 again | 3 Nov 16:55: the first attempt with the fixes stopped at once with `Warp CUDA error 2: out of memory`. Most likely a leftover viewer or check still held the 3070 (the same rung 7 had run at 4096 robots that morning, and the fixes only free memory). The 17:34 attempt failed the same way. `nvidia-smi` then showed the cause: another user's training (`Unitree-Go2-Flat`, `/mnt/ubuntu/chirag/marl_quadruped`, 2096 robots, started 16:18) holding 1.3 GB. To start once it ends (~19:40 at its pace) |
 
 **Seen in the viewer (rungs 1-4):**
 - In rungs 1-3 the hind legs kneel slightly at low commanded speeds, sometimes with the body
