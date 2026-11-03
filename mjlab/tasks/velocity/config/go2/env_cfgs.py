@@ -53,6 +53,7 @@
 # doc/experiments.md.
 
 import math
+from copy import deepcopy
 from dataclasses import replace  # copy of a dataclass with some fields changed
 
 import mujoco  # the physics engine's Python API (used to edit the robot model, MjSpec)
@@ -67,6 +68,7 @@ from mjlab.envs.mdp.actions import JointPositionActionCfg  # actions = joint pos
 from mjlab.managers.event_manager import EventTermCfg  # randomization/reset "events"
 from mjlab.managers.reward_manager import RewardTermCfg  # one reward term: function + weight
 from mjlab.managers.scene_entity_config import SceneEntityCfg  # robot/bodies/joints a term uses
+from mjlab.managers.observation_manager import ObservationTermCfg  # one observation term
 from mjlab.managers.termination_manager import TerminationTermCfg  # when an episode ends
 from mjlab.sensor import (
   ContactMatch,  # which geoms/bodies a contact sensor watches
@@ -78,6 +80,7 @@ from mjlab.sensor import (
 )
 from mjlab.tasks.velocity import mdp  # all reward/observation/event/termination functions
 from mjlab.tasks.velocity.terrain_profiles import set_terrain_profile  # "flat", "stairs", ...
+from mjlab.terrains.config import PGTT_HARD_MAX_STEP, PGTT_HARD_TERRAINS_CFG  # rung 9
 from mjlab.tasks.velocity.velocity_env_cfg import (
   make_pgtt_env_cfg,  # robot-independent PGTT task recipe (velocity_env_cfg.py)
   make_velocity_env_cfg,  # robot-independent stock velocity task
@@ -623,7 +626,10 @@ def unitree_go2_pgtt_repro_smooth_env_cfg(play: bool = False) -> ManagerBasedRlE
 
 # Rung N's name is RUNG_NAMES[N - 1]; __init__.py registers Mjlab-Velocity-PGTT-Rung<N>-...
 # and train_ladder.sh names the runs rung<N>_<name>.
-RUNG_NAMES = ("collisions", "delays", "pushes", "randomization", "rewards", "commands", "terrain")
+RUNG_NAMES = (
+  "collisions", "delays", "pushes", "randomization", "rewards", "commands", "terrain",
+  "dynamics", "hard_terrain",
+)
 
 
 def unitree_go2_pgtt_rung_env_cfg(rung: int, play: bool = False) -> ManagerBasedRlEnvCfg:
@@ -636,6 +642,9 @@ def unitree_go2_pgtt_rung_env_cfg(rung: int, play: bool = False) -> ManagerBased
     5 rewards        base_height, leg_contact and joint_limits (see below)
     6 commands       all three axes at once, 5% standing, resampled every 8-12 s
     7 terrain        mixed terrain (stairs, slopes, rough) with the terrain curriculum
+    8 dynamics       the teacher also sees every randomized dynamics value (mdp.robot_dynamics)
+    9 hard_terrain   PGTT_HARD_TERRAINS_CFG: taller stairs, rough ground and boulders that grow
+                     with the row, and a higher swing apex for the taller steps
 
   v1-v4 changed all of this at once and never walked; one change per rung means a failed
   rung points at exactly one change (scripts/train_ladder.sh stops there).
@@ -699,4 +708,22 @@ def unitree_go2_pgtt_rung_env_cfg(rung: int, play: bool = False) -> ManagerBased
       twist.heading_control_stiffness = 0.5  # type: ignore[attr-defined]
       twist.rel_heading_envs = 0.8  # type: ignore[attr-defined]
       twist.ranges.heading = (-math.pi, math.pi)  # type: ignore[attr-defined]
+  if rung >= 8:  # dynamics
+    # Sim-to-real: the teacher is told this robot's mass, centre of mass, motor strength,
+    # gains, joint friction, delay and encoder bias (90 values), so it can learn the best
+    # response to each robot; the student learns to infer them from its history and
+    # reconstructs them (the decoder sizes itself from this group).
+    cfg.observations["privileged"].terms["dynamics"] = ObservationTermCfg(
+      func=mdp.robot_dynamics
+    )
+  if rung >= 9:  # hard terrain
+    old = cfg.scene.terrain.terrain_generator if cfg.scene.terrain is not None else None
+    if old is not None:
+      hard = deepcopy(PGTT_HARD_TERRAINS_CFG)  # a harder recipe, the same grid and curriculum
+      for key in ("curriculum", "seed", "num_rows", "num_cols", "border_width", "difficulty_range"):
+        setattr(hard, key, getattr(old, key))  # play mode keeps its small grid
+      cfg.scene.terrain = replace(cfg.scene.terrain, terrain_generator=hard)
+    # Swing apex = 10 cm + the step height near the foot, capped here (was 15 cm): the
+    # tallest stairs in the recipe need ~20 cm of lift above the lower step.
+    cfg.rewards["foot_phase"].params["max_terrain_delta"] = PGTT_HARD_MAX_STEP + 0.03
   return cfg

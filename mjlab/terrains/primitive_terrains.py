@@ -656,3 +656,47 @@ class BoxRandomGridTerrainCfg(SubTerrainCfg):
         boxes.append(box)
 
     return boxes, box_colors
+
+
+@dataclass(kw_only=True)
+class BoxBouldersTerrainCfg(SubTerrainCfg):
+  """Flat ground scattered with boulders: a few rotated boxes, taller on harder rows.
+
+  The boulder count stays small on purpose: every terrain box is tested by every height-scan
+  ray, so ~30 large boxes per tile cost little, unlike a dense grid of small ones.
+  """
+
+  height_range: tuple[float, float] = (0.03, 0.15)
+  """Tallest boulder on row 0 and on the last row [m]; each boulder is 30-100% of it."""
+  size_range: tuple[float, float] = (0.3, 0.8)
+  """Footprint side length of a boulder [m]."""
+  num_boulders: int = 30
+  platform_width: float = 2.0
+  """Boulder-free square in the middle, where robots spawn [m]."""
+
+  def function(
+    self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator
+  ) -> TerrainOutput:
+    body = spec.body("terrain")
+    floor = make_plane(body, self.size, 0.0, center_zero=False)
+    geometries = [TerrainGeometry(geom=g, color=(0.5, 0.5, 0.5, 1.0)) for g in floor]
+    top = self.height_range[0] + difficulty * (self.height_range[1] - self.height_range[0])
+    cx, cy = self.size[0] / 2, self.size[1] / 2
+    keep_out = self.platform_width / 2 + self.size_range[1] / 2  # a rotated box's reach
+    placed = 0
+    while placed < self.num_boulders:
+      x, y = rng.uniform(0.5, self.size[0] - 0.5), rng.uniform(0.5, self.size[1] - 0.5)
+      if abs(x - cx) < keep_out and abs(y - cy) < keep_out:
+        continue  # keep the spawn platform clear
+      sx, sy = rng.uniform(*self.size_range, size=2)
+      h = top * rng.uniform(0.3, 1.0)
+      yaw = rng.uniform(0.0, np.pi)
+      box = body.add_geom(
+        type=mujoco.mjtGeom.mjGEOM_BOX,
+        size=(sx / 2, sy / 2, h / 2),  # half-sizes
+        pos=(x, y, h / 2),
+        quat=(np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)),  # turned about the vertical
+      )
+      geometries.append(TerrainGeometry(geom=box, color=_get_platform_color(_MUJOCO_GREEN)))
+      placed += 1
+    return TerrainOutput(origin=np.array([cx, cy, 0.0]), geometries=geometries)

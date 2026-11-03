@@ -62,6 +62,8 @@ everything here are in [COMMANDS.md](../COMMANDS.md).
 | 2 Nov | Docs: diagnosis results, the bug, inline comments on the reward code; "legs are frictionless" corrected (they grip with μ 1.0) | | `77080bf` | |
 | 3 Nov | `base_height` target 0.25 → **0.265 m**, weight kept at −50 | make a slight sag cost something without starving early learning | `4bb3280` | applies from rung 7 / the teacher on |
 | 3 Nov | Rungs drop the student LiDAR; ray-cast cache; `nan_state` termination; tests | rung 7: 80 s per iteration, NaN crash | `6da5075` | stairs step 2971 → 239 ms on the CPU; GPU run pending |
+| 4 Nov | Rung 8 "dynamics": the teacher also sees 90 randomized dynamics values (`mdp.robot_dynamics`) | sim-to-real: the teacher learns the best response per robot, the student learns to infer it | (this push) | built and tested; trains after rung 7 |
+| 4 Nov | Rung 9 "hard terrain": `PGTT_HARD_TERRAINS_CFG`, stairs 2-18 cm, rough ground scaling 0-10 cm, boulders 3-15 cm, swing cap 21 cm | a gradient from flat to big obstacles, within what a trotting Go2 can climb | (this push) | built and tested; trains after rung 8 |
 | 4 Nov | `physics_exploded` termination: a joint faster than 100 rad/s or the base faster than 20 m/s ends the episode | rung 7 rerun, iteration 6: some robots' physics blew up without turning NaN (hip angles ~10⁶ rad, `default_pose` −2×10¹³ per episode) | (uncommitted) | the exploded robots get reset instead of feeding garbage into the batch |
 | 3 Nov | Rung 7: heading commands for 80% of the robots (stiffness 0.5) | pre-flight review: with free yaw rates even a perfect walker was promoted by the terrain curriculum in only 52% of episodes | `d437833` | perfect walker promoted 84%, demoted 14% |
 
@@ -87,6 +89,9 @@ everything here are in [COMMANDS.md](../COMMANDS.md).
 | **rung 5** | `2026-11-03_01-00-05_rung5_rewards` | 1500 | rung 5, motor fix | WARN; at 1260: episode 996, speed ratio 0.91, legs down 0.0005 |
 | **rung 6** | `2026-11-03_02-53-15_rung6_commands` | 1500 | + teacher commands | WARN: **the flat-ground teacher** |
 | rung 7 | `2026-11-03_05-00-35_rung7_terrain` | 4 (crash) | + terrain | NaN std at iteration 4, 80 s/iteration |
+| rung 7 (rerun) | `2026-11-04_*_rung7_terrain` | 6000 | + all terrain fixes | running: 9.3 s/iteration |
+| rung 8 | `*_rung8_dynamics` | 3000 | + 90 privileged dynamics values | after rung 7 |
+| rung 9 | `*_rung9_hard_terrain` | 6000 | + the hard terrain gradient | after rung 8: **the teacher candidate** |
 
 "(bug)" means trained with the fading motors: those results describe the bug, not the setup.
 Folders are under `logs/rsl_rl/` on the GPU machine.
@@ -949,6 +954,59 @@ Checked against the built rung 7 config, the official PGTT code and the legged_g
 | `leg_ground_frac` | rising |
 | `Episode_Termination/nan_state` | many |
 | the iteration time | — |
+
+### Rung 8 (`rung8_dynamics`): the teacher knows each robot's dynamics
+
+- **Changes:** one more privileged term, `dynamics` (`mdp.robot_dynamics`, 90 values per robot).
+  It holds everything the randomization changes, as the sim set it:
+
+  | Values | Count |
+  |---|---|
+  | trunk mass added [kg] | 1 |
+  | trunk centre-of-mass shift [m] | 3 |
+  | leg mass × nominal | 1 |
+  | per joint: torque limit, Kp, Kd, armature and damping, each × nominal | 12 each |
+  | per joint: joint friction [Nm] and encoder bias [rad] | 12 each |
+  | motor delay [physics steps] | 1 |
+
+  The privileged group grows from 53 to 143 values.
+- **Why (sim-to-real):** the real robot's mass, motors and delays differ from the model. A
+  teacher that is *told* them learns the best response for each robot. The student can't be
+  told: it infers them from its history (the GRU belief encoder) and reconstructs them in its
+  decoder, which sizes itself from this group. Without randomization (play, the hack check)
+  every value reads nominal (×1, 0).
+- **Iterations:** 3000 (~8 h), on rung 7's terrain. Compare its curves with rung 7's at the
+  same iteration: the extra input should help or change nothing.
+- **Before distilling:** the Student task builds its own teacher inputs (53 privileged values,
+  no `dynamics`), so a rung 8+ teacher does not load into it yet. It must be built from the
+  rung's config first.
+
+### Rung 9 (`rung9_hard_terrain`): small to big obstacles, the teacher candidate
+
+- **Changes:** the recipe `PGTT_HARD_TERRAINS_CFG` (`mjlab/terrains/config.py`) and a higher
+  swing cap. Every kind spans easy (row 0) to hard (last row), so robots meet all sizes:
+
+  | Kind | Share | Row 0 → last row |
+  |---|---|---|
+  | flat | 18% | flat |
+  | stairs up/down, 30 or 40 cm treads | 45% | 2 → **18 cm** steps (rung 7: 1 → 13) |
+  | random rough, 20 cm "stones" | 9% | ~0 → **10 cm** bumps (rung 7: 0-5 cm on every row) |
+  | slopes up/down | 14% | 0 → 0.25 |
+  | waves | 5% | 0 → 5 cm |
+  | **boulders** (new): 30 rotated boxes, 30-80 cm wide, platform kept clear | 9% | 3 → **15 cm** (each boulder 30-100% of that) |
+
+- **Swing cap:** `foot_phase`'s `max_terrain_delta` goes from 15 to 21 cm. The swing apex is
+  10 cm plus the step height near the foot, so 18 cm steps get ~3 cm of clearance.
+- **Why these tops:** a trotting Go2 should stay within what its legs can walk. It stands
+  ~28 cm tall with ~21 cm thigh and calf, and 25-30 cm steps would need jumping or climbing
+  gaits, not a trot. (Sources: doc/research_terrain_and_privileged_state.md.)
+- **Cost:** 2569 terrain boxes (rung 7: 2629), +4% step time on the CPU. No robot blew up in a
+  48-robot, 40-step smoke test.
+- **New code:**
+  - `HfRandomUniformTerrainCfg.scale_with_difficulty` (opt-in, so rung 7 is unchanged);
+  - `BoxBouldersTerrainCfg`;
+  - tests `test_hard_terrain_grows_with_the_row` and `test_rungs_8_and_9`.
+- **Iterations:** 6000 (~15 h). The 10000-iteration teacher is this rung's setup.
 
 ### How each rung is judged
 

@@ -108,6 +108,58 @@ def geom_friction(
   return env.sim.model.geom_friction[:, geom_ids, 0]
 
 
+def robot_dynamics(
+  env: ManagerBasedRlEnv, trunk_body: str = "base_link", asset_name: str = "robot"
+) -> torch.Tensor:
+  """Every randomized dynamics parameter of each robot, as the sim set it. Privileged.
+
+  The teacher sees what makes this robot different (rung 8+), so it can learn the best
+  response to each; the student has to infer it from its history. Per robot, 90 values:
+    trunk mass added [kg] (1), trunk centre-of-mass shift [m] (3), leg mass x nominal (1),
+    and per joint (12 each): torque limit, Kp, Kd, armature and damping, each x nominal;
+    joint friction [Nm], encoder bias [rad]; then the motor delay [physics steps] (1).
+  A field that is not randomized in this task reads as its nominal value.
+  Shape: [num_envs, 90].
+  """
+  sim = env.sim
+  asset: Entity = env.scene[asset_name]
+  n = env.num_envs
+
+  def field(name: str) -> torch.Tensor:  # [n, ...]; unrandomized fields are shared by all
+    value = getattr(sim.model, name)
+    return value if value.dim() > 1 and value.shape[0] == n else value.expand(n, *value.shape)
+
+  def ratio(name: str, ids, col: int | None = None) -> torch.Tensor:
+    now, default = field(name)[:, ids], sim.get_default_field(name)[ids]
+    if col is not None:
+      now, default = now[..., col], default[..., col]
+    return now / torch.where(default.abs() > 1e-9, default, torch.ones_like(default))
+
+  trunk = asset.indexing.body_ids[asset.find_bodies(trunk_body)[0][0]]
+  legs = asset.indexing.body_ids[asset.find_bodies(r".*_(hip|thigh|calf)")[0]]
+  dofs = asset.indexing.joint_v_adr  # the 12 leg joints' velocity addresses
+  ctrl = asset.indexing.ctrl_ids  # the 12 motors
+  mass = field("body_mass")
+  parts = [
+    (mass[:, trunk] - sim.get_default_field("body_mass")[trunk]).unsqueeze(-1),
+    field("body_ipos")[:, trunk] - sim.get_default_field("body_ipos")[trunk],
+    (mass[:, legs].sum(-1) / sim.get_default_field("body_mass")[legs].sum()).unsqueeze(-1),
+    ratio("actuator_forcerange", ctrl, 1),
+    ratio("actuator_gainprm", ctrl, 0),
+    ratio("actuator_biasprm", ctrl, 2),
+    ratio("dof_armature", dofs),
+    ratio("dof_damping", dofs),
+    field("dof_frictionloss")[:, dofs],
+    asset.data.encoder_bias,
+  ]
+  lag = torch.zeros(n, 1, device=env.device)
+  for actuator in asset.actuators:
+    for buffer in getattr(actuator, "_delay_buffers", {}).values():
+      lag = buffer.current_lags.float().unsqueeze(-1)  # one lag per robot, shared by joints
+  parts.append(lag)
+  return torch.cat([p.float() for p in parts], dim=-1)
+
+
 def body_external_wrench(
   env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG
 ) -> torch.Tensor:

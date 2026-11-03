@@ -11,7 +11,8 @@
 #   (_PGTT_STAIRS_HEIGHT). Each row gets a difficulty from 0 to 1: row r gets
 #   (r + a random 0-1) / num_rows (terrain_generator.py), and a tile uses
 #   low + difficulty x (high - low). So the top row's stairs are 12-13 cm, row 0's 1-2 cm.
-#   random_rough ignores the difficulty: it is equally rough (noise_range) on every row.
+#   random_rough ignores the difficulty unless scale_with_difficulty=True (rung 9's recipe).
+# - Rung 9 trains on PGTT_HARD_TERRAINS_CFG (bottom of this file): wider ranges + boulders.
 # - More levels: num_rows (10). The robots start on rows 0-max_init_terrain_level (3, set in
 #   velocity_env_cfg.py). More rows or columns means more tiles, more boxes, slower ray casts.
 # - A new kind of tile: write its class in primitive_terrains.py (boxes) or
@@ -149,6 +150,24 @@ PGTT_MIXED_TERRAINS_CFG.sub_terrains.update({
   ),
 })
 
+
+# Rung 9: the same kinds of ground, each spanning easy to hard along the rows, plus boulders.
+# Row 0 stays gentle (2 cm steps, near-flat rough ground, 3 cm boulders) and the last row
+# reaches the top of each range, so every robot meets small and big obstacles over training.
+# The top step is what a trotting Go2 can climb, not more (doc/experiments.md, rung 9).
+PGTT_HARD_MAX_STEP = 0.18  # tallest stair step on the last row [m]
+PGTT_HARD_TERRAINS_CFG = deepcopy(PGTT_MIXED_TERRAINS_CFG)
+for name, terrain in PGTT_HARD_TERRAINS_CFG.sub_terrains.items():
+  if name.startswith("stairs"):
+    terrain.step_height_range = (0.02, PGTT_HARD_MAX_STEP)
+PGTT_HARD_TERRAINS_CFG.sub_terrains["random_rough"] = terrain_gen.HfRandomUniformTerrainCfg(
+  proportion=0.10, noise_range=(0.0, 0.10), noise_step=0.01, border_width=0.25,
+  downsampled_scale=0.2,  # 20 cm "stones": larger than a foot, so it can stand on one
+  scale_with_difficulty=True,  # near-flat on row 0, bumps up to 10 cm on the last row
+)
+PGTT_HARD_TERRAINS_CFG.sub_terrains["boulders"] = terrain_gen.BoxBouldersTerrainCfg(
+  proportion=0.10, height_range=(0.03, 0.15), size_range=(0.3, 0.8), num_boulders=30,
+)
 
 if __name__ == "__main__":
   import mujoco.viewer

@@ -141,7 +141,9 @@ line of section 1 first.
 | `Mjlab-Velocity-PGTT-Rung4-Unitree-Go2` | `rung4_randomization` | + wider domain randomization | 1500 |
 | `Mjlab-Velocity-PGTT-Rung5-Unitree-Go2` | `rung5_rewards` | + penalties for crouching, kneeling, joint limits | 1500 |
 | `Mjlab-Velocity-PGTT-Rung6-Unitree-Go2` | `rung6_commands` | + full command range, 5% standing | 1500 |
-| `Mjlab-Velocity-PGTT-Rung7-Unitree-Go2` | `rung7_terrain` | + stairs, slopes, rough ground: **the full teacher** | 6000 |
+| `Mjlab-Velocity-PGTT-Rung7-Unitree-Go2` | `rung7_terrain` | + stairs, slopes, rough ground | 6000 |
+| `Mjlab-Velocity-PGTT-Rung8-Unitree-Go2` | `rung8_dynamics` | + the teacher sees every randomized dynamics value | 3000 |
+| `Mjlab-Velocity-PGTT-Rung9-Unitree-Go2` | `rung9_hard_terrain` | + taller stairs (to 18 cm), bigger rough ground, boulders: **the full teacher** | 6000 |
 
 Each rung contains everything above it in the table.
 
@@ -156,7 +158,7 @@ own run name.
 | `r5_term100_ent001` | Rung5 | both | `diagnose_collapse.sh` (never run) |
 | `r6_term100` | Rung6 | `termination` −100 | `diagnose_collapse.sh` (never run) |
 | `rung6_seed2` | Rung6 | `--agent.seed 2` (is rung 6 reliable?) | by hand |
-| `teacher_full` | Rung7 | 10000 iterations, nothing else changed | by hand (4d) |
+| `teacher_full` | Rung9 | 10000 iterations, nothing else changed | by hand (4d) |
 
 Runs from before 2 Nov 23:07 (`a21cf12`) with rung 4 or later were trained with the motor bug
 (the motors weakened at every reset). Their results describe the bug, not the setup.
@@ -227,7 +229,8 @@ tmux attach -t ladder
 - A rung that was interrupted starts again from zero (the half-finished folder stays; ignore it).
 - **Rung 7 again after the terrain fixes (3 Nov):** includes heading commands for 80% of the
   robots, so the terrain curriculum can promote them. `git pull`, then
-  `bash scripts/train_ladder.sh 7`. It runs only rung 7 (6000 iterations), then the check.
+  `bash scripts/train_ladder.sh 7`. It runs rung 7 (6000 iterations), rung 8 (3000) and rung 9
+  (6000), each followed by the check, and stops at the first HACK: ~38 h in all.
   - Check the **Iteration time** in the first boxes: before the fix it was ~80 s.
   - The **ETA** wraps every 24 h (it prints h:m:s only). So `ETA: 12:54:48` can mean
     5 days + 12:54. Work it out: iteration time × iterations left.
@@ -312,7 +315,7 @@ tmux attach -t diag
 Only after rung 7 has passed (4a, `bash scripts/train_ladder.sh 7`). No extra settings: the
 `termination` −100 of the diagnosis is not needed (the collapse was the motor bug).
 ```bash
-tmux new -d -s teacher 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung7-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=10000 --agent.run-name teacher_full; exec bash'
+tmux new -d -s teacher 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung9-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=10000 --agent.run-name teacher_full; exec bash'
 tmux attach -t teacher
 ```
 - How long: 10000 × the iteration time of the rung 7 run. That was 80 s before the terrain
@@ -434,14 +437,34 @@ CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/play.py Mjlab
 ```
 - Without `--terrain stairs` it shows the mixed terrain. `--terrain rough` and `--terrain flat` also work.
 
-**`teacher_full`**: the teacher: rung 7 for 10000 iterations. Only after rung 7 passes.
+**`rung8_dynamics`**: + the teacher sees every randomized dynamics value. Runs by itself after rung 7 with `bash scripts/train_ladder.sh 7`.
 ```bash
 # start
-tmux new -d -s train 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung7-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=10000 --agent.run-name teacher_full; exec bash'
+tmux new -d -s train 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung8-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=3000 --agent.run-name rung8_dynamics; exec bash'
+tmux attach -t train
+# watch
+RUN=$(ls -d logs/rsl_rl/go2_pgtt_repro/*_rung8_dynamics | tail -1); CKPT=$(ls $RUN/model_*.pt | sort -V | tail -1); echo $CKPT
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/play.py Mjlab-Velocity-PGTT-Rung8-Unitree-Go2 --checkpoint-file $CKPT --num-envs 1 --viewer viser --terrain stairs
+```
+
+**`rung9_hard_terrain`**: + stairs to 18 cm, rough ground to 10 cm, boulders to 15 cm, each harder by row: **the teacher candidate**. Runs by itself after rung 8.
+```bash
+# start
+tmux new -d -s train 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung9-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=6000 --agent.run-name rung9_hard_terrain; exec bash'
+tmux attach -t train
+# watch
+RUN=$(ls -d logs/rsl_rl/go2_pgtt_repro/*_rung9_hard_terrain | tail -1); CKPT=$(ls $RUN/model_*.pt | sort -V | tail -1); echo $CKPT
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/play.py Mjlab-Velocity-PGTT-Rung9-Unitree-Go2 --checkpoint-file $CKPT --num-envs 1 --viewer viser --terrain stairs
+```
+
+**`teacher_full`**: the teacher: rung 9 for 10000 iterations. Only after rung 9 passes.
+```bash
+# start
+tmux new -d -s train 'cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && git pull && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung9-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=10000 --agent.run-name teacher_full; exec bash'
 tmux attach -t train
 # watch
 RUN=$(ls -d logs/rsl_rl/go2_pgtt_repro/*_teacher_full | tail -1); CKPT=$(ls $RUN/model_*.pt | sort -V | tail -1); echo $CKPT
-CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/play.py Mjlab-Velocity-PGTT-Rung7-Unitree-Go2 --checkpoint-file $CKPT --num-envs 1 --viewer viser --terrain stairs
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/play.py Mjlab-Velocity-PGTT-Rung9-Unitree-Go2 --checkpoint-file $CKPT --num-envs 1 --viewer viser --terrain stairs
 ```
 - Without `--terrain stairs` it shows the mixed terrain. `--terrain rough` and `--terrain flat` also work.
 

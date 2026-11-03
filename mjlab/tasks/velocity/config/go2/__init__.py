@@ -70,7 +70,7 @@ register_mjlab_task(
   runner_cls=OnPolicyRunner,
 )
 
-# Rungs 1-7: rung 0b plus one more change each, up to the full teacher (Rung7 is it).
+# Rungs 1-9: rung 0b plus one more change each, up to the full teacher (Rung9 is it).
 # scripts/train_ladder.sh trains them in order.
 for _rung in range(1, len(RUNG_NAMES) + 1):
   register_mjlab_task(

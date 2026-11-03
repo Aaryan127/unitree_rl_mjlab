@@ -14,9 +14,9 @@ References:
 # (0.1 m), stored in steps of vertical_scale (0.005 m). Good for smooth or noisy ground; boxes
 # (primitive_terrains.py) are better for sharp edges like stairs.
 # - HfRandomUniformTerrainCfg: the "random_rough" ground. Each cell gets a random height in
-#   noise_range (PGTT mix: 0-5 cm), in steps of noise_step. It ignores the difficulty, so it is
-#   equally rough on every curriculum row. To make it grow with the row, the code must change
-#   HERE: scale the noise by `difficulty` in its function().
+#   noise_range, in steps of noise_step. By default it ignores the difficulty, so it is equally
+#   rough on every curriculum row (rung 7: 0-5 cm). With scale_with_difficulty=True (rung 9)
+#   the highest bump grows from noise_range[0] on row 0 to noise_range[1] on the last row.
 # - HfPyramidSlopedTerrainCfg: slopes up/down (slope_range, scaled by difficulty).
 # - HfWaveTerrainCfg: waves (amplitude_range, scaled by difficulty).
 # To change the size of the bumps, slopes or waves (not how they scale), edit their ranges in
@@ -277,11 +277,17 @@ class HfRandomUniformTerrainCfg(SubTerrainCfg):
   vertical_scale: float = 0.005
   base_thickness_ratio: float = 1.0
   border_width: float = 0.0
+  scale_with_difficulty: bool = False
+  """If True, the highest bump grows with the curriculum row: noise_range[0] on row 0 up to
+  noise_range[1] on the last row. If False (the original), every row uses all of noise_range."""
 
   def function(
     self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator
   ) -> TerrainOutput:
-    del difficulty  # Unused.
+    lo, hi = self.noise_range
+    if self.scale_with_difficulty:  # row 0 nearly flat, the last row up to noise_range[1]
+      hi = lo + difficulty * (hi - lo)
+    noise_range = (lo, max(hi, lo + self.noise_step))
 
     body = spec.body("terrain")
 
@@ -318,8 +324,8 @@ class HfRandomUniformTerrainCfg(SubTerrainCfg):
       width_downsampled = int(inner_size[0] / downsampled_scale)
       length_downsampled = int(inner_size[1] / downsampled_scale)
 
-      height_min = int(self.noise_range[0] / self.vertical_scale)
-      height_max = int(self.noise_range[1] / self.vertical_scale)
+      height_min = int(noise_range[0] / self.vertical_scale)
+      height_max = int(noise_range[1] / self.vertical_scale)
       height_step = int(self.noise_step / self.vertical_scale)
 
       height_range = np.arange(height_min, height_max + height_step, height_step)
@@ -342,8 +348,8 @@ class HfRandomUniformTerrainCfg(SubTerrainCfg):
     else:
       width_downsampled = int(self.size[0] / downsampled_scale)
       length_downsampled = int(self.size[1] / downsampled_scale)
-      height_min = int(self.noise_range[0] / self.vertical_scale)
-      height_max = int(self.noise_range[1] / self.vertical_scale)
+      height_min = int(noise_range[0] / self.vertical_scale)
+      height_max = int(noise_range[1] / self.vertical_scale)
       height_step = int(self.noise_step / self.vertical_scale)
 
       height_range = np.arange(height_min, height_max + height_step, height_step)
@@ -397,7 +403,7 @@ class HfRandomUniformTerrainCfg(SubTerrainCfg):
       material=material_name,
     )
 
-    spawn_height = (self.noise_range[0] + self.noise_range[1]) / 2
+    spawn_height = (noise_range[0] + noise_range[1]) / 2
     origin = np.array([self.size[0] / 2, self.size[1] / 2, spawn_height])
 
     geom = TerrainGeometry(geom=hfield_geom, hfield=field)

@@ -163,6 +163,49 @@ class AuditRegressionTests(unittest.TestCase):
     finally:
       env.close()
 
+  def test_hard_terrain_grows_with_the_row(self):
+    import mujoco
+    import numpy as np
+
+    from mjlab.terrains import BoxBouldersTerrainCfg, HfRandomUniformTerrainCfg
+
+    def tallest(cfg, difficulty):
+      spec = mujoco.MjSpec()
+      spec.worldbody.add_body(name="terrain")
+      out = cfg.function(difficulty, spec, np.random.default_rng(0))
+      return out, spec
+
+    rough = HfRandomUniformTerrainCfg(
+      size=(8.0, 8.0), noise_range=(0.0, 0.10), noise_step=0.01, border_width=0.25,
+      downsampled_scale=0.2, scale_with_difficulty=True,
+    )
+    peaks = []
+    for d in (0.0, 1.0):
+      _, spec = tallest(rough, d)
+      peaks.append(float(np.max(spec.hfields[-1].userdata)) * spec.hfields[-1].size[2])
+    self.assertLess(peaks[0], 0.03)  # row 0: nearly flat
+    self.assertGreater(peaks[1], 0.06)  # last row: real bumps
+
+    boulders = BoxBouldersTerrainCfg(size=(8.0, 8.0), height_range=(0.03, 0.15))
+    out, _ = tallest(boulders, 1.0)
+    boxes = out.geometries[1:]  # [0] is the floor
+    self.assertEqual(len(boxes), 30)
+    for g in boxes:
+      x, y, z = g.geom.pos
+      self.assertLessEqual(2 * z, 0.15 + 1e-6)  # never taller than the range
+      self.assertFalse(abs(x - 4.0) < 1.0 and abs(y - 4.0) < 1.0)  # spawn platform clear
+    self.assertTrue(np.allclose(out.origin, (4.0, 4.0, 0.0)))
+
+  def test_rungs_8_and_9(self):
+    from mjlab.tasks.velocity.config.go2.env_cfgs import unitree_go2_pgtt_rung_env_cfg
+
+    self.assertNotIn("dynamics", unitree_go2_pgtt_rung_env_cfg(7).observations["privileged"].terms)
+    self.assertIn("dynamics", unitree_go2_pgtt_rung_env_cfg(8).observations["privileged"].terms)
+    nine = unitree_go2_pgtt_rung_env_cfg(9)
+    self.assertIn("boulders", nine.scene.terrain.terrain_generator.sub_terrains)
+    self.assertTrue(nine.scene.terrain.terrain_generator.curriculum)
+    self.assertGreater(nine.rewards["foot_phase"].params["max_terrain_delta"], 0.15)
+
   def test_raycast_cache_matches_a_fresh_cast(self):
     from mjlab.envs import ManagerBasedRlEnv
     from mjlab.tasks.velocity.config.go2.env_cfgs import unitree_go2_pgtt_rung_env_cfg
