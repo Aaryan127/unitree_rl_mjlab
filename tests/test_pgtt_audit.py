@@ -228,18 +228,24 @@ class AuditRegressionTests(unittest.TestCase):
 
   def test_rung8_teacher_gets_the_full_sim_state(self):
     from mjlab.envs import ManagerBasedRlEnv
+    from mjlab.tasks.velocity import mdp
     from mjlab.tasks.velocity.config.go2.env_cfgs import unitree_go2_pgtt_rung_env_cfg
 
     full_state = {"true_lin_acc", "joint_torques", "motor_target_error", "base_height",
                   "foot_pos", "foot_vel", "foot_clearance", "foot_contact_time"}
     seven = unitree_go2_pgtt_rung_env_cfg(7)
-    self.assertFalse(full_state & set(seven.observations["privileged"].terms))
+    self.assertNotIn("privileged_full", seven.observations)
     for cfg in (seven, unitree_go2_pgtt_rung_env_cfg(8)):  # the teacher never reads them
       self.assertNotIn("student_sensors", cfg.observations)
       self.assertNotIn("height_noisy", cfg.observations)
     self.assertFalse(seven.observations["policy"].terms["joint_pos"].params.get("biased", False))
     cfg = unitree_go2_pgtt_rung_env_cfg(8)
-    self.assertLessEqual(full_state, set(cfg.observations["privileged"].terms))
+    self.assertEqual(full_state, set(cfg.observations["privileged_full"].terms) & full_state)
+    self.assertFalse(full_state & set(cfg.observations["privileged"].terms))  # not in the actor
+    groups = load_rl_cfg("Mjlab-Velocity-PGTT-Rung8-Unitree-Go2").obs_groups
+    self.assertIn("privileged_full", groups["critic"])  # the critic reads it...
+    self.assertFalse(any("privileged_full" in groups[k] for k in ("policy", "height", "privileged")))  # ...the actor doesn't
+    self.assertNotIn("privileged_full", load_rl_cfg("Mjlab-Velocity-PGTT-Rung7-Unitree-Go2").obs_groups["critic"])
     self.assertTrue(cfg.observations["policy"].terms["joint_pos"].params["biased"])  # as the robot reads
     self.assertTrue(cfg.observations["proprio_history"].terms["joint_pos_history"].params["biased"])
     cfg.scene.num_envs = 2
@@ -250,8 +256,18 @@ class AuditRegressionTests(unittest.TestCase):
       obs, _ = env.reset()
       for _ in range(20):
         obs, *_ = env.step(torch.zeros(2, 12))
-      self.assertEqual(obs["privileged"].shape[-1], 237)
+      self.assertEqual(obs["privileged"].shape[-1], 83)  # actor: rung 7's 53 + 30 of dynamics
+      self.assertEqual(obs["privileged_full"].shape[-1], 154)  # critic only: 94 + the other 60
+      manager = env.observation_manager
+      names = manager._group_obs_term_names["privileged"]
+      actor_dyn = manager._group_obs_term_cfgs["privileged"][names.index("dynamics")]
+      everything = mdp.robot_dynamics(env)  # all 90, in DYNAMICS_PARTS order
+      self.assertEqual(everything.shape[-1], 90)
+      both = torch.cat([actor_dyn.func(env, **actor_dyn.params),
+                        mdp.robot_dynamics(env, parts=mdp.DYNAMICS_CRITIC_PARTS)], -1)
+      self.assertEqual(sorted(both[0].tolist()), sorted(everything[0].tolist()))  # a split, nothing lost
       self.assertTrue(torch.isfinite(obs["privileged"]).all())
+      self.assertTrue(torch.isfinite(obs["privileged_full"]).all())
     finally:
       env.close()
 

@@ -110,18 +110,32 @@ def geom_friction(
   return env.sim.model.geom_friction[:, geom_ids, 0]
 
 
+DYNAMICS_PARTS = (
+  "trunk_mass", "trunk_com", "leg_mass", "torque_limit", "kp", "kd", "armature", "damping",
+  "joint_friction", "encoder_bias", "delay",
+)
+# Rung 8: the teacher's actor gets the parts with a real effect that the student has some
+# chance to infer; the critic gets the per-joint rest (small effect, not inferable from
+# the student's sensors: a probe found R^2 ~ 0), see doc/experiments.md, rung 8.
+DYNAMICS_ACTOR_PARTS = ("trunk_mass", "trunk_com", "leg_mass", "kp", "kd", "delay")
+DYNAMICS_CRITIC_PARTS = ("torque_limit", "armature", "damping", "joint_friction", "encoder_bias")
+
+
 def robot_dynamics(
-  env: ManagerBasedRlEnv, trunk_body: str = "base_link", asset_name: str = "robot"
+  env: ManagerBasedRlEnv,
+  trunk_body: str = "base_link",
+  asset_name: str = "robot",
+  parts: tuple[str, ...] = DYNAMICS_PARTS,
 ) -> torch.Tensor:
-  """Every randomized dynamics parameter of each robot, as the sim set it. Privileged.
+  """The randomized dynamics parameters of each robot, as the sim set it. Privileged.
 
   The teacher sees what makes this robot different (rung 8+), so it can learn the best
-  response to each; the student has to infer it from its history. Per robot, 90 values:
-    trunk mass added [kg] (1), trunk centre-of-mass shift [m] (3), leg mass x nominal (1),
-    and per joint (12 each): torque limit, Kp, Kd, armature and damping, each x nominal;
-    joint friction [Nm], encoder bias [rad]; then the motor delay [physics steps] (1).
-  A field that is not randomized in this task reads as its nominal value.
-  Shape: [num_envs, 90].
+  response to each; the student has to infer it from its history. All parts, 90 values:
+    trunk_mass added [kg] (1), trunk_com shift [m] (3), leg_mass x nominal (1), and per
+    joint (12 each): torque_limit, kp, kd, armature and damping, each x nominal;
+    joint_friction [Nm], encoder_bias [rad]; then the motor delay [physics steps] (1).
+  `parts` picks which, in DYNAMICS_PARTS order. A field that is not randomized in this
+  task reads as its nominal value. Shape: [num_envs, sum of the parts' sizes].
   """
   sim = env.sim
   asset: Entity = env.scene[asset_name]
@@ -142,24 +156,33 @@ def robot_dynamics(
   dofs = asset.indexing.joint_v_adr  # the 12 leg joints' velocity addresses
   ctrl = asset.indexing.ctrl_ids  # the 12 motors
   mass = field("body_mass")
-  parts = [
-    (mass[:, trunk] - sim.get_default_field("body_mass")[trunk]).unsqueeze(-1),
-    field("body_ipos")[:, trunk] - sim.get_default_field("body_ipos")[trunk],
-    (mass[:, legs].sum(-1) / sim.get_default_field("body_mass")[legs].sum()).unsqueeze(-1),
-    ratio("actuator_forcerange", ctrl, 1),
-    ratio("actuator_gainprm", ctrl, 0),
-    ratio("actuator_biasprm", ctrl, 2),
-    ratio("dof_armature", dofs),
-    ratio("dof_damping", dofs),
-    field("dof_frictionloss")[:, dofs],
-    asset.data.encoder_bias,
-  ]
-  lag = torch.zeros(n, 1, device=env.device)
-  for actuator in asset.actuators:
-    for buffer in getattr(actuator, "_delay_buffers", {}).values():
-      lag = buffer.current_lags.float().unsqueeze(-1)  # one lag per robot, shared by joints
-  parts.append(lag)
-  return torch.cat([p.float() for p in parts], dim=-1)
+
+  def lag() -> torch.Tensor:
+    value = torch.zeros(n, 1, device=env.device)
+    for actuator in asset.actuators:
+      for buffer in getattr(actuator, "_delay_buffers", {}).values():
+        value = buffer.current_lags.float().unsqueeze(-1)  # one lag per robot, shared by joints
+    return value
+
+  compute = {
+    "trunk_mass": lambda: (mass[:, trunk] - sim.get_default_field("body_mass")[trunk]).unsqueeze(-1),
+    "trunk_com": lambda: field("body_ipos")[:, trunk] - sim.get_default_field("body_ipos")[trunk],
+    "leg_mass": lambda: (
+      mass[:, legs].sum(-1) / sim.get_default_field("body_mass")[legs].sum()
+    ).unsqueeze(-1),
+    "torque_limit": lambda: ratio("actuator_forcerange", ctrl, 1),
+    "kp": lambda: ratio("actuator_gainprm", ctrl, 0),
+    "kd": lambda: ratio("actuator_biasprm", ctrl, 2),
+    "armature": lambda: ratio("dof_armature", dofs),
+    "damping": lambda: ratio("dof_damping", dofs),
+    "joint_friction": lambda: field("dof_frictionloss")[:, dofs],
+    "encoder_bias": lambda: asset.data.encoder_bias,
+    "delay": lag,
+  }
+  unknown = set(parts) - set(compute)
+  if unknown:
+    raise ValueError(f"Unknown dynamics parts {sorted(unknown)}; known: {DYNAMICS_PARTS}")
+  return torch.cat([compute[p]().float() for p in DYNAMICS_PARTS if p in parts], dim=-1)
 
 
 def body_external_wrench(
@@ -185,8 +208,9 @@ def contact_normals(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
 
 
 ##
-# Full simulator state for the teacher (rung 8+): everything the sim knows that the
-# other privileged terms do not already give. Privileged, never on the robot.
+# Full simulator state for the teacher's critic (rung 8+, group privileged_full):
+# everything the sim knows that the privileged terms do not already give. Never on the
+# robot, and not in the actor (the student could not copy actions that depend on it).
 ##
 
 

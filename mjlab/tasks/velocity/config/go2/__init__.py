@@ -79,7 +79,7 @@ for _rung in range(1, len(RUNG_NAMES) + 1):
     task_id=f"Mjlab-Velocity-PGTT-Rung{_rung}-Unitree-Go2",
     env_cfg=unitree_go2_pgtt_rung_env_cfg(_rung),
     play_env_cfg=unitree_go2_pgtt_rung_env_cfg(_rung, play=True),
-    rl_cfg=unitree_go2_pgtt_repro_runner_cfg(),
+    rl_cfg=unitree_go2_pgtt_repro_runner_cfg(full_state_critic=_rung >= 8),
     runner_cls=OnPolicyRunner,
   )
 

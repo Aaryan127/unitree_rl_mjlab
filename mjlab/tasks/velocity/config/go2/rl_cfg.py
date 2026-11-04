@@ -72,6 +72,12 @@ PGTT_TEACHER_OBS_GROUPS = {
   "privileged": ("privileged",),  # actor's privileged encoder: contacts, friction, push force
   "critic": ("critic", "height", "privileged"),  # the critic sees everything, noise-free
 }
+# Rung 8+: the critic also reads the rest of the sim state (group privileged_full, only in
+# the rung 8+ environments). The actor's inputs, and so the student's teacher, are unchanged.
+PGTT_TEACHER_FULL_STATE_OBS_GROUPS = {
+  **PGTT_TEACHER_OBS_GROUPS,
+  "critic": ("critic", "height", "privileged", "privileged_full"),
+}
 PGTT_STUDENT_OBS_GROUPS = {
   # Only what the real robot measures: IMU, joints, command, gait clock, plus the
   # accelerometer, motor torque estimates and foot force sensors...
@@ -141,11 +147,12 @@ def unitree_go2_pgtt_student_runner_cfg() -> RslRlDistillationRunnerCfg:
   )
 
 
-def unitree_go2_pgtt_repro_runner_cfg() -> RslRlOnPolicyRunnerCfg:
+def unitree_go2_pgtt_repro_runner_cfg(full_state_critic: bool = False) -> RslRlOnPolicyRunnerCfg:
   """PGTT teacher on the reproduced official setup, with Brax PPO's settings
   (PGTT train.py: gamma 0.97, lr 3e-4 fixed, 8 epochs, clip 0.3, entropy 0.01 on the
   tanh-squashed action, unroll 20, value loss 0.5, initial std softplus(0) ~ 0.7)."""
-  # Used by the Repro, Repro-Smooth and Rung1-7 tasks (the ladder), experiment go2_pgtt_repro.
+  # Used by the Repro, Repro-Smooth and Rung1-9 tasks (the ladder), experiment go2_pgtt_repro.
+  # full_state_critic (rungs 8+): the critic also reads group privileged_full.
   return RslRlOnPolicyRunnerCfg(
     policy=RslRlPpoActorCriticWildCfg(
       init_noise_std=0.7,  # Brax: softplus(0) = 0.69
@@ -174,7 +181,8 @@ def unitree_go2_pgtt_repro_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       desired_kl=0.01,
       max_grad_norm=1.0,
     ),
-    obs_groups=PGTT_TEACHER_OBS_GROUPS,  # same inputs as the teacher, so the networks match
+    # Same actor inputs as the teacher, so the networks match.
+    obs_groups=PGTT_TEACHER_FULL_STATE_OBS_GROUPS if full_state_critic else PGTT_TEACHER_OBS_GROUPS,
     experiment_name="go2_pgtt_repro",  # logs/rsl_rl/go2_pgtt_repro/
     save_interval=100,
     num_steps_per_env=20,  # Brax's unroll length

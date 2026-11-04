@@ -68,6 +68,7 @@ from mjlab.envs.mdp.actions import JointPositionActionCfg  # actions = joint pos
 from mjlab.managers.event_manager import EventTermCfg  # randomization/reset "events"
 from mjlab.managers.reward_manager import RewardTermCfg  # one reward term: function + weight
 from mjlab.managers.scene_entity_config import SceneEntityCfg  # robot/bodies/joints a term uses
+from mjlab.managers.observation_manager import ObservationGroupCfg  # a named group of terms
 from mjlab.managers.observation_manager import ObservationTermCfg  # one observation term
 from mjlab.managers.termination_manager import TerminationTermCfg  # when an episode ends
 from mjlab.sensor import (
@@ -720,23 +721,32 @@ def unitree_go2_pgtt_rung_env_cfg(rung: int, play: bool = False) -> ManagerBased
     # response to each robot; the student learns to infer them from its history and
     # reconstructs them (the decoder sizes itself from this group).
     privileged = cfg.observations["privileged"].terms
-    privileged["dynamics"] = ObservationTermCfg(func=mdp.robot_dynamics)
+    # Of the 90 dynamics values, the actor gets the 30 with a real effect that the student
+    # can hope to infer (trunk mass, CoM, leg mass, Kp, Kd, delay); the other 60 (per-joint
+    # torque limit, armature, damping, friction, encoder bias) go to the critic below.
+    privileged["dynamics"] = ObservationTermCfg(
+      func=mdp.robot_dynamics, params={"parts": mdp.DYNAMICS_ACTOR_PARTS}
+    )
     # The encoder bias (rung 4's randomization) now also shifts the joint readings, as on
     # the robot, where the encoder both reads and servos q + bias. Before, it only offset
     # the motor target, so q read true: the student's torque estimate, Kp (target - q),
     # then showed -Kp x bias, a value the robot's tau_est never carries.
     for group, term in (("policy", "joint_pos"), ("proprio_history", "joint_pos_history")):
       cfg.observations[group].terms[term].params["biased"] = True
-    # Everything else the sim knows (94 values), so the teacher never has to guess what
-    # a sensor would only estimate: the noise-free, undelayed versions of its own
-    # readings, the true motor torques and the delayed target the motors are tracking,
+    # Everything else the sim knows (154 values): the rest of `dynamics`, the noise-free,
+    # undelayed versions of its own readings, the true motor torques and the delayed target the motors are tracking,
     # the true acceleration, the trunk's height above the ground, and each foot's
     # position, velocity, height above the ground and air/contact time.
-    # Already there: true velocity, contacts, contact forces and normals, friction,
-    # thigh/shank contact, the push force, and the clean height map (group height).
+    # For the CRITIC only (group privileged_full, read via the full-state runner config):
+    # the critic is never copied by the student, so extra state there sharpens the
+    # teacher's value estimates for free. In the actor, inputs the student cannot work out
+    # from its own sensors (the true torque under randomized gains, the delayed target)
+    # would let the teacher act on information the student never has: the imitation gap.
+    # Already in the actor's `privileged`: true velocity, contacts, contact forces and
+    # normals, friction, thigh/shank contact, the push force, dynamics; and the clean map.
     feet = SceneEntityCfg("robot", site_names=_LEGS)
     scan = {"sensor_name": "height_scanner"}
-    privileged.update({
+    cfg.observations["privileged_full"] = ObservationGroupCfg(terms={
       "true_ang_vel": ObservationTermCfg(func=mdp.builtin_sensor, params={"sensor_name": "robot/imu_ang_vel"}),
       "true_gravity": ObservationTermCfg(func=mdp.projected_gravity),
       "true_joint_pos": ObservationTermCfg(func=mdp.joint_pos_rel),
@@ -755,7 +765,10 @@ def unitree_go2_pgtt_rung_env_cfg(rung: int, play: bool = False) -> ManagerBased
       "foot_contact_time": ObservationTermCfg(
         func=mdp.foot_contact_time, params={"sensor_name": "feet_ground_contact"}
       ),
-    })
+      "dynamics_rest": ObservationTermCfg(
+        func=mdp.robot_dynamics, params={"parts": mdp.DYNAMICS_CRITIC_PARTS}
+      ),
+    }, enable_corruption=False)
   if rung >= 9:  # hard terrain
     old = cfg.scene.terrain.terrain_generator if cfg.scene.terrain is not None else None
     if old is not None:

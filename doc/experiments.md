@@ -36,8 +36,10 @@ everything here are in [COMMANDS.md](../COMMANDS.md).
   - resets for robots whose physics turns NaN (`nan_state`) or blows up (`physics_exploded`).
 - **Rungs 8 and 9 are built and tested.** `train_ladder.sh 7` runs them after rung 7:
   - rung 8: the teacher also sees every randomized dynamics value (90) and the rest of the
-    simulator's state (94 more: true torques, accelerations, foot positions and heights...),
-    for sim-to-real;
+    simulator's state (true torques, accelerations, foot positions and heights...). The
+    actor gets the 30 dynamics values with a real effect the student can hope to infer;
+    everything else goes to the **critic only** (154 values), so the student, which copies
+    the actor, never has to match information it can't get;
   - rung 9: every kind of ground scales from easy to hard by row (stairs 2-18 cm, rough
     0-10 cm, boulders 3-15 cm), within what a trotting Go2 can climb (research note:
     [research_terrain_and_privileged_state.md](research_terrain_and_privileged_state.md)).
@@ -72,7 +74,8 @@ everything here are in [COMMANDS.md](../COMMANDS.md).
 | 4 Nov | Rung 8 "dynamics": the teacher also sees 90 randomized dynamics values (`mdp.robot_dynamics`) | sim-to-real: the teacher learns the best response per robot, the student learns to infer it | `ea62402` | built and tested; trains after rung 7 |
 | 4 Nov | Rung 9 "hard terrain": `PGTT_HARD_TERRAINS_CFG`, stairs 2-18 cm, rough ground scaling 0-10 cm, boulders 3-15 cm, swing cap 21 cm | a gradient from flat to big obstacles, within what a trotting Go2 can climb | `ea62402` | built and tested; trains after rung 8 |
 | 4 Nov | `physics_exploded` termination: a joint faster than 100 rad/s or the base faster than 20 m/s ends the episode | rung 7 rerun, iteration 6: some robots' physics blew up without turning NaN (hip angles ~10⁶ rad, `default_pose` −2×10¹³ per episode) | `18e7e21` | the exploded robots get reset instead of feeding garbage into the batch |
-| 4 Nov | Rung 8 also gives the teacher the rest of the sim state (94 values, privileged 143 → 237) and reads joints with the encoder bias, as the robot does; the student gets every Go2 EDU sensor (`student_sensors`: accelerometer, motor torque estimate, foot force sensors, with sim stand-ins and fault models); `Rung<N>-Student` tasks; export and C++ for the new sensors; `eval_gait.py --terrain` | the teacher should know everything the sim knows, the deployed student should use every sensor the robot has; the old Student task could not load a ladder teacher | (this commit) | tested: a rung 9 teacher loads into `Rung9-Student`, distills, exports (ONNX = PyTorch to 1e-7); 34 tests pass. Not yet trained |
+| 4 Nov | Rung 8 also gives the teacher the rest of the sim state (94 values) and reads joints with the encoder bias, as the robot does; the student gets every Go2 EDU sensor (`student_sensors`: accelerometer, motor torque estimate, foot force sensors, with sim stand-ins and fault models); `Rung<N>-Student` tasks; export and C++ for the new sensors; `eval_gait.py --terrain` | the teacher should know everything the sim knows, the deployed student should use every sensor the robot has; the old Student task could not load a ladder teacher | (this commit) | tested: a rung 9 teacher loads into `Rung9-Student`, distills, exports (ONNX = PyTorch to 1e-7); 34 tests pass. Not yet trained |
+| 4 Nov | The 94 full-state values move from the teacher's actor to its **critic only** (group `privileged_full`), and so do 60 of the 90 `dynamics` values (per-joint torque limit, armature, damping, friction, encoder bias). Actor privileged 83, critic 393 | the student copies the actor: actor inputs it can't work out from its own sensors would widen the imitation gap; the critic is never copied. The 60: small effect (friction ≤ 0.2 Nm, armature ±20%, damping ±10%, bias ±0.86°), not inferable (probe R² ≈ 0), and 42% of the student's reconstruction target | (next commit) | tested: one PPO iteration on rung 9 and a distillation; 34 tests pass |
 | 3 Nov | Rung 7: heading commands for 80% of the robots (stiffness 0.5) | pre-flight review: with free yaw rates even a perfect walker was promoted by the terrain curriculum in only 52% of episodes | `d437833` | perfect walker promoted 84%, demoted 14% |
 
 ## All runs
@@ -977,9 +980,19 @@ Checked against the built rung 7 config, the official PGTT code and the legged_g
   | per joint: joint friction [Nm] and encoder bias [rad] | 12 each |
   | motor delay [physics steps] | 1 |
 
-  The privileged group grows from 53 to 143 values, and to 237 with the full state below.
-- **And the rest of the simulator's state (added 4 Nov, before rung 8 first ran):** 94 more
-  values, so nothing the sim knows is hidden from the teacher:
+  **Split (4 Nov, before rung 8 first ran):** the actor gets 30 of these, trunk mass, CoM,
+  leg mass, Kp, Kd and delay: the parameters with a real effect that the student can hope to
+  infer (a probe on simulated data: trunk mass R² 0.3-0.4, CoM ~0.3, Kp ~0.08). The other
+  60 (per-joint torque limit, armature, damping, friction, encoder bias) go to the critic:
+  small effects (friction ≤ 0.2 Nm against ~10 Nm torques, armature ±20%, damping ±10%,
+  the torque limit only matters at saturation, encoder bias ±0.86°), R² ≈ 0 in the probe,
+  and 60 independent values would be 42% of the student's reconstruction target, a loss
+  floor that shares its GRU with the action imitation. The actor's privileged group grows
+  from 53 to 83 values.
+- **And the rest of the simulator's state, for the critic (added 4 Nov, before rung 8 first
+  ran):** 94 more values (plus the 60 `dynamics` values above, 154 in all) in a group
+  `privileged_full` that only the critic reads (critic input 209 → 393), so nothing the sim
+  knows is hidden from the teacher's training:
 
   | Term | Values | What |
   |---|---|---|
@@ -995,7 +1008,30 @@ Checked against the built rung 7 config, the official PGTT code and the legged_g
   Already there before: true velocity, contacts, contact forces and normals, foot friction,
   thigh/shank contact, the push force, and the clean height map. Not given: the terrain
   type and curriculum row (the map shows the ground itself) and velocity kicks (instant;
-  their effect is in the true velocity). The critic sees all of it too.
+  their effect is in the true velocity).
+
+  **Why the critic and not the actor.** The student learns by copying the actor's actions. If
+  the actor's actions depend on inputs the student can't work out from its own sensors, the
+  student can't copy them: the imitation gap that Agarwal 2022, DreamWaQ, HIM and SLR report
+  (research note). Several of the 94 are like that: the true torque under randomized gains,
+  the delayed target in transit. Others the actor doesn't need (foot positions follow from the
+  joint angles). The critic is only used to judge states during training and is never
+  copied, so a fuller state there can only sharpen the teacher's learning signal.
+  Options considered: all in the actor (gap risk); critic only (chosen); a ROA-style loss
+  that keeps the teacher's privileged encoding predictable from the student's history (Fu
+  et al. 2022: the strongest fix, kept for if the measured gap is large); RL fine-tuning of
+  the student after distilling (a later stage 3).
+- **Rung 8 bundles four changes**, so a difference from rung 7 can't be pinned on one:
+  `dynamics` in the actor, biased joint readings, the full-state critic, and 3000 iterations
+  instead of 6000. The critic part is a real change: until rung 7 the critic's "clean"
+  group carried the 0-20 ms sensor delays of rung 2 (correlation with the true values: joint
+  velocity 0.71, angular velocity 0.84), so rung 8 is the first critic with undelayed state.
+- **After rung 8 trains, test each `dynamics` part twice:** (1) teacher sensitivity: in the
+  hack-check setup, set the part to nominal or shuffle it across robots and measure the change
+  in actions, falls and tracking; (2) student inferability: after distilling, the student's
+  reconstruction R² for that part on robots it hasn't seen. A part the teacher relies on but
+  the student reconstructs at R² ≈ 0 is a measured imitation gap: move it to the critic too
+  (rung 8b). If no part matters to the teacher, `dynamics` was dead weight.
 - **And the encoder bias shifts the joint readings** (`joint_pos`, `joint_pos_history` with
   `biased=True`). Rung 4's encoder-bias randomization offset only the motor target, so the
   sim read the true angle. On the robot the encoder both reads and servos the biased angle.
@@ -1160,7 +1196,7 @@ with them does worse when they fail mid-episode, they come out.
 | rung 7, third try (4 Nov) | started with all fixes: 9.26 s/iteration. Its first log showed robots with blown-up physics (`default_pose` −2×10¹³), fixed with `physics_exploded` (`18e7e21`); restart from that commit on |
 | rung 7, with the guard (4 Nov) | running. At iteration 26: 9.71 s/iteration (~16 h), every reward term normal-sized again, `nan_state` 0, `physics_exploded` 1.2 (~10% of episode endings: to watch, should fall as the gait forms), `terrain_levels` 0.55 (down from 1.6, normal before it walks) |
 | rung 7 at iteration 3923 | healthy: noise std 0.25, `terrain_levels` **5.48** (from 0.55), speed ratio 0.84 (with training noise), legs down 0.029, base 0.275 m, `physics_exploded` **0.05** (from 1.2: it was the early flailing), falls low (`fell_over` 0.3, `body_contact` 1.4), episode length 801 |
-| 8 dynamics, 9 hard terrain | built and tested (`ea62402`); run after rung 7 with `train_ladder.sh 7`. Rung 8 now also gets the full sim state (237 privileged values, 4 Nov): it must start from that commit |
+| 8 dynamics, 9 hard terrain | built and tested (`ea62402`); run after rung 7 with `train_ladder.sh 7`. Rung 8 now also reads biased joints, gives the actor 30 dynamics values (privileged 83) and the critic the full sim state (393 inputs), 4 Nov: it must start from that commit |
 
 **Seen in the viewer (rungs 1-4):**
 - In rungs 1-3 the hind legs kneel slightly at low commanded speeds, sometimes with the body

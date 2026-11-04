@@ -81,13 +81,15 @@ weights ramp from 10% to full strength over `1500 × 24` training steps.
 | `proprio_history` | 84 | Joint position history `3×12`, velocity history `2×12`, action history `2×12` |
 | `height` | 99 | Clean 11×9 yaw-aligned downward-ray terrain map |
 | `height_noisy` | 99 | Simulated head LiDAR returns converted to the same grid, then corrupted |
-| `privileged` | 53 (143 from rung 8) | Body linear velocity, foot contacts/forces/normals, friction, leg contact, external wrench; from rung 8 also the 90 randomized dynamics values (mass, CoM, motor strength, Kp/Kd, armature, damping, joint friction, encoder bias, delay) |
+| `privileged` | 53 (83 from rung 8) | Body linear velocity, foot contacts/forces/normals, friction, leg contact, external wrench; from rung 8 also 30 randomized dynamics values (trunk mass, CoM, leg mass, Kp, Kd, delay) |
+| `privileged_full` | 154, rung 8+ | critic only: the other 60 dynamics values (per-joint torque limit, armature, damping, friction, encoder bias) and 94 values of sim state (noise-free readings, true torques and acceleration, delayed motor target, base height, foot positions/velocities/clearances/contact times) |
 | `critic` | 57 | Clean `policy`-style body data plus body linear velocity |
 
 The [teacher routing](../mjlab/tasks/velocity/config/go2/rl_cfg.py) concatenates
 `policy + proprio_history` for 138 actor body inputs, and uses the clean height 99 and
-privileged 53 separately (237 from rung 8: dynamics plus the rest of the sim state). Its
-critic concatenates `critic + height + privileged` for 209 inputs (393 from rung 8). The
+privileged 53 separately (83 from rung 8, with 30 `dynamics` values). Its critic concatenates
+`critic + height + privileged` for 209 inputs; from rung 8 it also reads `privileged_full`
+(154 more values, critic only), 393 in all. The
 student sees `policy` 54 plus `student_sensors` 19 (accelerometer, motor torque estimates,
 foot force sensors) and `height_noisy` 99: 172 inputs, every Go2 EDU sensor it uses
 (doc/experiments.md, "The student's sensors"). Clean heights and

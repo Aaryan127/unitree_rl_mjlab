@@ -43,9 +43,14 @@ Every training run, change and result (the experiment log):
 - [ ] Confirm LiDAR topic, TF, coverage, and timing on the physical Go2
 
 ## 2026-11-04: the full sim state for the teacher, every EDU sensor for the student
-- Rung 8's teacher also gets the rest of the simulator's state, 94 values: noise-free
+- Rung 8's teacher **critic** also gets the rest of the simulator's state, 154 values: 60 of the
+  90 dynamics values (per-joint torque limit, armature, damping, friction, encoder bias), noise-free
   readings, true torques and acceleration, the delayed motor target, trunk height, foot
-  positions, velocities, heights and air/contact times. Privileged 143 → 237. From rung 8
+  positions, velocities, heights and air/contact times (group `privileged_full`, critic
+  209 → 393). Not the actor: the student copies the actor, and inputs it can't infer would
+  widen the imitation gap. The actor keeps 30 dynamics values (trunk mass, CoM, leg mass,
+  Kp, Kd, delay): privileged 53 → 83. After rung 8: test each dynamics part's effect on
+  the teacher and its reconstruction by the student. From rung 8
   the joint readings include the encoder bias, as on the robot (otherwise the torque
   estimate leaked the bias).
 - The student (what runs on the robot) gets the Go2 EDU sensors it lacked, in a new group
