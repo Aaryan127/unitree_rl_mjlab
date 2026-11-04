@@ -1196,6 +1196,8 @@ with them does worse when they fail mid-episode, they come out.
 | rung 7, third try (4 Nov) | started with all fixes: 9.26 s/iteration. Its first log showed robots with blown-up physics (`default_pose` −2×10¹³), fixed with `physics_exploded` (`18e7e21`); restart from that commit on |
 | rung 7, with the guard (4 Nov) | running. At iteration 26: 9.71 s/iteration (~16 h), every reward term normal-sized again, `nan_state` 0, `physics_exploded` 1.2 (~10% of episode endings: to watch, should fall as the gait forms), `terrain_levels` 0.55 (down from 1.6, normal before it walks) |
 | rung 7 at iteration 3923 | healthy: noise std 0.25, `terrain_levels` **5.48** (from 0.55), speed ratio 0.84 (with training noise), legs down 0.029, base 0.275 m, `physics_exploded` **0.05** (from 1.2: it was the early flailing), falls low (`fell_over` 0.3, `body_contact` 1.4), episode length 801 |
+| rung 8, first start (4 Nov) | started automatically after rung 7 on code from before the critic split; stopped at ~iteration 1000 (2.5 h) to restart on the final design. Healthy when stopped: speed ratio 0.85, `terrain_levels` 5.2, legs down 0.027, base 0.276 m, `physics_exploded` 0.1, `action_tremor` 0.47 (with training noise). Its folder stays as a record |
+| rung 8, restarted 21:27 (4 Nov) | running on `832fcc8`: actor privileged **83**, critic **393** (confirmed in the run's startup print) |
 | 8 dynamics, 9 hard terrain | built and tested (`ea62402`); run after rung 7 with `train_ladder.sh 7`. Rung 8 now also reads biased joints, gives the actor 30 dynamics values (privileged 83) and the critic the full sim state (393 inputs), 4 Nov: it must start from that commit |
 
 **Seen in the viewer (rungs 1-4):**

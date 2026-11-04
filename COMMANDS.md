@@ -654,7 +654,10 @@ that); use your phone.
 
 | I want | Add |
 |---|---|
-| a particular terrain (stairs etc.) | `--terrain stairs` (or `flat`, `rough`, `mixed`) |
+| a particular terrain (stairs etc.) | `--terrain stairs` (or `flat`, `rough`, `mixed`, `hard` = rung 9's recipe) |
+| one kind of ground only | `--sub-terrain random_rough` (or `boulders`, `stairs_up_30`, `waves`, ...; a wrong name lists them) |
+| one difficulty (1.0 = the hardest row) | `--difficulty 1.0` |
+| e.g. the hardest rough ground (rung 9's, 0-10 cm) | `--terrain hard --sub-terrain random_rough --difficulty 1.0` |
 | an older checkpoint | a different `--checkpoint-file`, e.g. `.../model_500.pt` |
 | a robot that does nothing / random actions (for comparison) | `--agent zero` / `--agent random` (no checkpoint needed) |
 

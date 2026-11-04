@@ -34,7 +34,12 @@ class PlayConfig:
     video_width: int | None = None
     camera: int | str | None = None
     viewer: Literal["auto", "native", "viser"] = "auto"
-    terrain: Literal["flat", "stairs", "rough", "mixed"] | None = None
+    terrain: Literal["flat", "stairs", "rough", "mixed", "hard"] | None = None
+    """Swap the terrain recipe (default: the checkpoint's). "hard" is rung 9's."""
+    sub_terrain: str | None = None
+    """Keep only this kind of ground, e.g. random_rough, boulders, stairs_up_30."""
+    difficulty: float | None = None
+    """Put every robot on one difficulty in [0, 1] (1 = the hardest row)."""
     allow_legacy_config: bool = False
 
     # Internal flag used by demo script.
@@ -108,6 +113,24 @@ def run_play(task_id: str, cfg: PlayConfig):
     if cfg.terrain is not None:
         from mjlab.tasks.velocity.terrain_profiles import set_terrain_profile
         set_terrain_profile(env_cfg, cfg.terrain)
+    if cfg.sub_terrain is not None or cfg.difficulty is not None:
+        terrain = env_cfg.scene.terrain
+        gen = terrain.terrain_generator if terrain is not None else None
+        if gen is None:
+            raise ValueError("--sub-terrain/--difficulty need a generated terrain (not flat)")
+        if cfg.sub_terrain is not None:
+            if cfg.sub_terrain not in gen.sub_terrains:
+                raise ValueError(f"No sub-terrain {cfg.sub_terrain!r}; this terrain has {sorted(gen.sub_terrains)}")
+            gen.sub_terrains = {cfg.sub_terrain: gen.sub_terrains[cfg.sub_terrain]}
+            gen.sub_terrains[cfg.sub_terrain].proportion = 1.0
+        if cfg.difficulty is not None:
+            if not 0.0 <= cfg.difficulty <= 1.0:
+                raise ValueError("--difficulty must be in [0, 1]")
+            # One row at that difficulty (as scripts/evaluate_pgtt.py does).
+            gen.num_rows = 1
+            gen.curriculum = True
+            gen.difficulty_range = (cfg.difficulty, cfg.difficulty)
+            terrain.max_init_terrain_level = 0
 
     if cfg.num_envs is not None:
         env_cfg.scene.num_envs = cfg.num_envs

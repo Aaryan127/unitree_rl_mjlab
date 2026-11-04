@@ -4,20 +4,25 @@
 # --------------------------------------------
 # The --terrain switch of play.py and check_reward_hacking.py (and train.py): "flat" (a plane),
 # "stairs" (PGTT_STAIRS_TERRAINS_CFG), "rough" (only flat/random_rough/slopes/waves from the
-# mixed recipe) or "mixed" (PGTT_MIXED_TERRAINS_CFG). It swaps the terrain of a config and
+# mixed recipe), "mixed" (PGTT_MIXED_TERRAINS_CFG, rung 7) or "hard" (PGTT_HARD_TERRAINS_CFG,
+# rung 9: taller stairs, rough ground growing with the row, boulders). It swaps the terrain of a config and
 # keeps its grid settings. It does not decide what a rung trains on: that is the rung's config.
 # A new profile: add its name to TerrainProfile and an `if profile == ...` branch.
 
 from copy import deepcopy
 from typing import Literal
 
-from mjlab.terrains.config import PGTT_MIXED_TERRAINS_CFG, PGTT_STAIRS_TERRAINS_CFG
+from mjlab.terrains.config import (
+  PGTT_HARD_TERRAINS_CFG,
+  PGTT_MIXED_TERRAINS_CFG,
+  PGTT_STAIRS_TERRAINS_CFG,
+)
 
-TerrainProfile = Literal["flat", "stairs", "rough", "mixed"]
+TerrainProfile = Literal["flat", "stairs", "rough", "mixed", "hard"]
 
 
 def set_terrain_profile(cfg, profile: TerrainProfile) -> None:
-  if profile not in {"flat", "stairs", "rough", "mixed"}:
+  if profile not in {"flat", "stairs", "rough", "mixed", "hard"}:
     raise ValueError(f"Unknown terrain profile: {profile}")
   terrain = cfg.scene.terrain
   if terrain is None:
@@ -28,7 +33,8 @@ def set_terrain_profile(cfg, profile: TerrainProfile) -> None:
     cfg.curriculum.pop("terrain_levels", None)
     return
   previous = terrain.terrain_generator
-  generator = deepcopy(PGTT_STAIRS_TERRAINS_CFG if profile == "stairs" else PGTT_MIXED_TERRAINS_CFG)
+  recipes = {"stairs": PGTT_STAIRS_TERRAINS_CFG, "hard": PGTT_HARD_TERRAINS_CFG}
+  generator = deepcopy(recipes.get(profile, PGTT_MIXED_TERRAINS_CFG))
   if profile == "rough":
     generator.sub_terrains = {
       key: value for key, value in generator.sub_terrains.items()
