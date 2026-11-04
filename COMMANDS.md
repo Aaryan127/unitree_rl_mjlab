@@ -469,18 +469,31 @@ CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/play.py Mjlab
 - Without `--terrain stairs` it shows the mixed terrain. `--terrain rough` and `--terrain flat` also work.
 
 **`student`**: stage 2, distills a teacher into the deployable student. Only after `teacher_full`.
-The student task is built separately from the rungs, so first check that it loads a rung-7
-teacher: start it and see that the first iteration box appears.
+Use the `Rung<N>-Student` task of the teacher's rung (7, 8 or 9; `teacher_full` is rung 9): it
+is that rung's environment plus the student's sensors (LiDAR map, accelerometer, motor torque
+estimates, foot force sensors), so the frozen teacher sees exactly what it trained on. The
+old `Mjlab-Velocity-PGTT-Student-Unitree-Go2` does not load a ladder teacher.
 ```bash
-# start (TEACHER = the teacher checkpoint to distill)
+# start (TEACHER = the teacher checkpoint to distill; always pass it)
 TEACHER=$(ls $(ls -d logs/rsl_rl/go2_pgtt_repro/*_teacher_full | tail -1)/model_*.pt | sort -V | tail -1); echo $TEACHER
-tmux new -d -s train "cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Student-Unitree-Go2 --env.scene.num-envs=4096 --agent.run-name student --teacher-checkpoint $TEACHER; exec bash"
+tmux new -d -s train "cd /mnt/sdb1/Research/neptune/unitree_rl_mjlab && . .venv/bin/activate && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/train.py Mjlab-Velocity-PGTT-Rung9-Student-Unitree-Go2 --env.scene.num-envs=4096 --agent.run-name student --teacher-checkpoint $TEACHER; exec bash"
 tmux attach -t train
 # watch
-RUN=$(ls -d logs/rsl_rl/go2_pgtt_student/*_student | tail -1); CKPT=$(ls $RUN/model_*.pt | sort -V | tail -1); echo $CKPT
-CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/play.py Mjlab-Velocity-PGTT-Student-Unitree-Go2 --checkpoint-file $CKPT --num-envs 1 --viewer viser --terrain stairs
+RUN=$(ls -d logs/rsl_rl/go2_pgtt_rung_student/*_student | tail -1); CKPT=$(ls $RUN/model_*.pt | sort -V | tail -1); echo $CKPT
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/play.py Mjlab-Velocity-PGTT-Rung9-Student-Unitree-Go2 --checkpoint-file $CKPT --num-envs 1 --viewer viser --terrain stairs
 ```
 - The student command uses double quotes, so `$TEACHER` is filled in before tmux starts.
+- The student simulates the head LiDAR again (the rungs skip it to train fast), so expect
+  slower iterations than the teacher's.
+- To try distillation early on a rung 7 teacher: `Mjlab-Velocity-PGTT-Rung7-Student-Unitree-Go2`
+  with a rung 7 checkpoint.
+- **Export for the robot** needs the foot force calibration (doc/experiments.md, "Calibrating
+  the foot force sensors"): the raw readings with the feet in the air and standing, SDK foot
+  order FR, FL, RR, RL:
+  ```bash
+  python scripts/export_deploy.py --checkpoint-file $CKPT --task Mjlab-Velocity-PGTT-Rung9-Student-Unitree-Go2 \
+    --foot-force-offset <FR> <FL> <RR> <RL> --foot-force-standing <FR> <FL> <RR> <RL>
+  ```
 
 **Starting a run again with the same name** makes a new folder with a newer date. The watch
 lines take the newest. For an older one: `ls -d logs/rsl_rl/go2_pgtt_repro/*_<RUN_NAME>` and
@@ -764,7 +777,9 @@ CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python scripts/check_reward_
 Each robot gets one fixed command (stand, forward 0.3/0.6/1.0 m/s, gait 1/2/3 Hz, backward,
 sideways, turning, diagonal) and the table shows tracking, steps per second against the gait
 clock, bounces, foot lift, slip, tilt, power, tremor and knee clearance. Each column is
-explained at the top of `scripts/eval_gait.py`. Flat ground only.
+explained at the top of `scripts/eval_gait.py`. It runs on the checkpoint's own terrain;
+`--terrain flat` puts every checkpoint on flat ground, e.g. to compare rung 6 (flat) with rung 7
+(terrain): same commands, same ground.
 
 **GPU machine:**
 ```bash

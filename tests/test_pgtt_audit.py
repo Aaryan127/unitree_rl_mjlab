@@ -56,7 +56,7 @@ class AuditRegressionTests(unittest.TestCase):
     cfg = asdict(load_rl_cfg(TASK))
     obs = {key: torch.randn(2, size) for key, size in {
       "policy": 54, "proprio_history": 84, "height": 99,
-      "height_noisy": 99, "privileged": 53, "critic": 57}.items()}
+      "height_noisy": 99, "student_sensors": 19, "privileged": 53, "critic": 57}.items()}
     from tensordict import TensorDict
     obs = TensorDict(obs, batch_size=[2])
     with contextlib.redirect_stdout(io.StringIO()):
@@ -224,6 +224,139 @@ class AuditRegressionTests(unittest.TestCase):
       self.assertFalse(torch.equal(cached, scan.data.hit_pos_w))
     finally:
       env.close()
+
+
+  def test_rung8_teacher_gets_the_full_sim_state(self):
+    from mjlab.envs import ManagerBasedRlEnv
+    from mjlab.tasks.velocity.config.go2.env_cfgs import unitree_go2_pgtt_rung_env_cfg
+
+    full_state = {"true_lin_acc", "joint_torques", "motor_target_error", "base_height",
+                  "foot_pos", "foot_vel", "foot_clearance", "foot_contact_time"}
+    seven = unitree_go2_pgtt_rung_env_cfg(7)
+    self.assertFalse(full_state & set(seven.observations["privileged"].terms))
+    for cfg in (seven, unitree_go2_pgtt_rung_env_cfg(8)):  # the teacher never reads them
+      self.assertNotIn("student_sensors", cfg.observations)
+      self.assertNotIn("height_noisy", cfg.observations)
+    self.assertFalse(seven.observations["policy"].terms["joint_pos"].params.get("biased", False))
+    cfg = unitree_go2_pgtt_rung_env_cfg(8)
+    self.assertLessEqual(full_state, set(cfg.observations["privileged"].terms))
+    self.assertTrue(cfg.observations["policy"].terms["joint_pos"].params["biased"])  # as the robot reads
+    self.assertTrue(cfg.observations["proprio_history"].terms["joint_pos_history"].params["biased"])
+    cfg.scene.num_envs = 2
+    cfg.scene.terrain.terrain_generator.num_rows = 2
+    cfg.scene.terrain.terrain_generator.num_cols = 2
+    env = ManagerBasedRlEnv(cfg=cfg, device="cpu")
+    try:
+      obs, _ = env.reset()
+      for _ in range(20):
+        obs, *_ = env.step(torch.zeros(2, 12))
+      self.assertEqual(obs["privileged"].shape[-1], 237)
+      self.assertTrue(torch.isfinite(obs["privileged"]).all())
+    finally:
+      env.close()
+
+  def test_torque_estimate_uses_nominal_gains(self):
+    """tau_est stand-in = nominal-gain PD torque: equal to the true torque with nominal
+    gains, different once the gains are randomized (the robot's tau_est cannot see that)."""
+    from mjlab.envs import ManagerBasedRlEnv
+    from mjlab.tasks.velocity.config.go2.env_cfgs import unitree_go2_pgtt_rung_student_env_cfg
+
+    cfg = unitree_go2_pgtt_rung_student_env_cfg(7)
+    cfg.scene.num_envs = 4
+    cfg.scene.terrain.terrain_generator.num_rows = 2
+    cfg.scene.terrain.terrain_generator.num_cols = 2
+    env = ManagerBasedRlEnv(cfg=cfg, device="cpu")
+    try:
+      env.reset()
+      robot = env.scene["robot"]
+      manager = env.observation_manager
+      names = manager._group_obs_term_names["student_sensors"]
+      estimate = manager._group_obs_term_cfgs["student_sensors"][names.index("motor_torque")].func
+      gains = env.sim.model.actuator_gainprm
+      for t in range(30):
+        env.step(0.3 * torch.sin(torch.full((4, 12), t * 0.3)))
+      randomized = (gains[:, robot.indexing.ctrl_ids, 0] - env.sim.get_default_field(
+        "actuator_gainprm")[robot.indexing.ctrl_ids, 0]).abs().amax(-1) > 1e-3
+      error = (estimate(env) - robot.data.actuator_force).abs().amax(-1)
+      self.assertTrue(randomized.any())
+      self.assertTrue((error[randomized] > 1e-2).all())
+      if (~randomized).any():
+        self.assertTrue((error[~randomized] < 1e-3).all())
+    finally:
+      env.close()
+
+  def test_foot_force_faults(self):
+    from mjlab.utils.noise import FootForceNoiseModelCfg, UniformNoiseCfg
+
+    cfg = FootForceNoiseModelCfg(noise_cfg=UniformNoiseCfg(n_min=-0.01, n_max=0.01))
+    model = cfg.class_type(cfg, num_envs=512, device="cpu")
+    load = torch.ones(512, 4)
+    first, second = model(load), model(load * 2)
+    self.assertTrue((first >= 0).all())
+    dead = model._dead.squeeze(-1)
+    self.assertTrue((first[dead] == 0).all())
+    stuck = model._stuck & ~dead[:, None]
+    self.assertTrue(torch.equal(first[stuck], second[stuck]))  # frozen whatever the load
+    ok = ~model._stuck & ~dead[:, None]
+    self.assertTrue((second[ok] > first[ok]).all())  # a working sensor follows the load
+    self.assertGreater(ok.float().mean().item(), 0.8)
+
+  def test_rung9_student_loads_its_teacher_and_exports_in_order(self):
+    from mjlab.envs import ManagerBasedRlEnv
+    from mjlab.rl import RslRlVecEnvWrapper
+    from mjlab.rsl_rl.runners import DistillationRunner, OnPolicyRunner
+    import importlib.util
+    import pathlib
+    import sys
+    import tempfile
+
+    def make(task):
+      cfg = load_env_cfg(task)
+      cfg.scene.num_envs = 4
+      cfg.scene.terrain.terrain_generator.num_rows = 2
+      cfg.scene.terrain.terrain_generator.num_cols = 2
+      return RslRlVecEnvWrapper(ManagerBasedRlEnv(cfg=cfg, device="cpu"))
+
+    with tempfile.TemporaryDirectory() as out:
+      env = make("Mjlab-Velocity-PGTT-Rung9-Unitree-Go2")
+      try:
+        teacher = OnPolicyRunner(env, asdict(load_rl_cfg("Mjlab-Velocity-PGTT-Rung9-Unitree-Go2")), out, device="cpu")
+        teacher.logger_type = "tensorboard"  # set by learn(), which this skips
+        teacher.save(f"{out}/model_0.pt")
+      finally:
+        env.close()
+      task = "Mjlab-Velocity-PGTT-Rung9-Student-Unitree-Go2"
+      env = make(task)
+      try:
+        agent = asdict(load_rl_cfg(task))
+        student = DistillationRunner(env, agent, device="cpu")
+        student.load(f"{out}/model_0.pt", load_optimizer=False, map_location="cpu")  # strict
+        groups = tuple(agent["obs_groups"]["policy"])
+        self.assertEqual(groups, ("policy", "student_sensors"))
+        path = pathlib.Path(__file__).resolve().parents[1] / "scripts/export_deploy.py"
+        spec = importlib.util.spec_from_file_location("export_deploy", path)
+        export = importlib.util.module_from_spec(spec)
+        sys.modules["export_deploy"] = export  # dataclasses look their module up here
+        spec.loader.exec_module(export)
+        standing = export.sim_standing_foot_load(load_env_cfg(task))  # sim foot order FL FR RL RR
+        self.assertAlmostEqual(sum(standing), 4.0, delta=0.4)  # the four carry the weight
+        self.assertGreater(min(standing[2:]), max(standing[:2]))  # hind feet carry more
+        cfg = export.ExportConfig(checkpoint_file="", foot_force_offset=(10.0,) * 4,
+                                  foot_force_standing=(110.0,) * 4)
+        deploy = export.build_deploy_yaml(env.unwrapped, cfg, groups, standing)
+        names = list(deploy["observations"])
+        self.assertEqual(names[-4:], ["imu_accelerometer", "joint_tau_est", "foot_force", "height_scan"])
+        dims = sum(len(t["scale"]) for t in deploy["observations"].values())
+        self.assertEqual(dims, student.alg.policy.student_obs_dim)
+        self.assertEqual(deploy["observations"]["foot_force"]["params"]["foot_ids_map"], [1, 0, 3, 2])
+        params = deploy["observations"]["foot_force"]["params"]
+        for sim_foot, sdk in enumerate(params["foot_ids_map"]):  # robot standing reads the sim's
+          self.assertAlmostEqual((110.0 - params["offset"][sdk]) * params["scale"][sdk], standing[sim_foot], places=5)
+        self.assertEqual(deploy["observations"]["joint_tau_est"]["clip"], [-23.5, 23.5])
+        with self.assertRaises(ValueError):  # no calibration, no export
+          export.build_deploy_yaml(env.unwrapped, export.ExportConfig(checkpoint_file=""), groups, standing)
+      finally:
+        env.close()
 
 
 if __name__ == "__main__":

@@ -47,7 +47,11 @@ from mjlab.tasks.velocity import mdp
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.terrains import TerrainImporterCfg
 from mjlab.terrains.config import PGTT_MIXED_TERRAINS_CFG, ROUGH_TERRAINS_CFG
-from mjlab.utils.noise import HeightScanNoiseModelCfg
+from mjlab.utils.noise import (
+  FootForceNoiseModelCfg,
+  HeightScanNoiseModelCfg,
+  NoiseModelWithAdditiveBiasCfg,
+)
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
 
@@ -394,6 +398,7 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
     proprio_history joint pos/vel/action history, noisy  teacher actor
     height          clean height scan                    teacher actor, critic
     height_noisy    corrupted height scan                student, ROBOT
+    student_sensors accelerometer, torque est., foot force student, ROBOT
     privileged      contacts, friction, pushes, lin vel  teacher actor, critic
     critic          proprio + base lin vel, clean        critic
 
@@ -493,6 +498,45 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
   }
 
+  # The rest of the Go2 EDU's sensors, for the student only (the teacher reads the true
+  # values in `privileged`). Each is the sim stand-in for what the robot's LowState
+  # reports, with that sensor's errors: a per-episode bias on top of per-step noise, up
+  # to 20 ms late. Kept out of `policy` because the frozen teacher inside the student
+  # reads `policy` and would no longer match its checkpoint.
+  student_sensor_terms = {
+    # IMU accelerometer (imu_state.accelerometer) [m/s^2], gravity included. Clipped at
+    # +-50: MuJoCo's foot-strike spikes reach ~60, the real IMU filters them.
+    "base_lin_acc": ObservationTermCfg(
+      func=mdp.builtin_sensor,
+      params={"sensor_name": "robot/imu_lin_acc"},
+      noise=NoiseModelWithAdditiveBiasCfg(
+        noise_cfg=Unoise(n_min=-0.5, n_max=0.5),
+        bias_noise_cfg=Unoise(n_min=-0.3, n_max=0.3, operation="abs"),
+      ),
+      clip=(-50.0, 50.0),
+      delay_max_lag=1,
+    ),
+    # Motor torque estimate (motor_state.tau_est) [Nm]: the nominal-gain PD torque the
+    # motor driver commands (see mdp.motor_torque_estimate for why not the true torque).
+    "motor_torque": ObservationTermCfg(
+      func=mdp.motor_torque_estimate,
+      noise=NoiseModelWithAdditiveBiasCfg(
+        noise_cfg=Unoise(n_min=-0.5, n_max=0.5),
+        bias_noise_cfg=Unoise(n_min=-0.3, n_max=0.3, operation="abs"),
+      ),
+      delay_max_lag=1,
+    ),
+    # Foot force sensors (foot_force), in units of the nominal per-foot load, with
+    # calibration errors, stuck sensors and dead episodes (FootForceNoiseModelCfg).
+    "foot_force": ObservationTermCfg(
+      func=mdp.foot_force_sensor,
+      params={"sensor_name": "feet_ground_contact"},
+      noise=FootForceNoiseModelCfg(),
+      clip=(0.0, 3.0),
+      delay_max_lag=1,
+    ),
+  }
+
   privileged_terms = {
     "base_lin_vel": ObservationTermCfg(func=mdp.base_lin_vel),
     "foot_contact": ObservationTermCfg(
@@ -531,6 +575,9 @@ def make_pgtt_env_cfg() -> ManagerBasedRlEnvCfg:
     "height": ObservationGroupCfg(terms=height_terms, enable_corruption=False),
     "height_noisy": ObservationGroupCfg(
       terms=height_noisy_terms, enable_corruption=True
+    ),
+    "student_sensors": ObservationGroupCfg(
+      terms=student_sensor_terms, enable_corruption=True
     ),
     "privileged": ObservationGroupCfg(terms=privileged_terms, enable_corruption=False),
     "critic": ObservationGroupCfg(terms=critic_terms, enable_corruption=False),

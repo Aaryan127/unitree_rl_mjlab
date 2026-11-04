@@ -73,7 +73,9 @@ PGTT_TEACHER_OBS_GROUPS = {
   "critic": ("critic", "height", "privileged"),  # the critic sees everything, noise-free
 }
 PGTT_STUDENT_OBS_GROUPS = {
-  "policy": ("policy",),  # only what the real robot measures...
+  # Only what the real robot measures: IMU, joints, command, gait clock, plus the
+  # accelerometer, motor torque estimates and foot force sensors...
+  "policy": ("policy", "student_sensors"),
   "student_height": ("height_noisy",),  # ...and the LiDAR-built, noisy map
   # The frozen teacher inside the student still gets its own inputs, to produce the
   # actions the student imitates.
@@ -178,3 +180,13 @@ def unitree_go2_pgtt_repro_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     num_steps_per_env=20,  # Brax's unroll length
     max_iterations=3000,  # default; train_ladder.sh and the commands set --agent.max-iterations
   )
+
+
+def unitree_go2_pgtt_rung_student_runner_cfg() -> RslRlDistillationRunnerCfg:
+  """Stage 2 for a ladder teacher (Rung<N>-Student tasks): the same student, distilled from
+  a go2_pgtt_repro checkpoint. Pass --teacher-checkpoint: the newest run in go2_pgtt_repro
+  is not necessarily the rung you mean."""
+  cfg = unitree_go2_pgtt_student_runner_cfg()
+  cfg.teacher_experiment_name = "go2_pgtt_repro"
+  cfg.experiment_name = "go2_pgtt_rung_student"  # logs/rsl_rl/go2_pgtt_rung_student/
+  return cfg

@@ -35,16 +35,20 @@ everything here are in [COMMANDS.md](../COMMANDS.md).
   - heading commands, so the curriculum can promote robots;
   - resets for robots whose physics turns NaN (`nan_state`) or blows up (`physics_exploded`).
 - **Rungs 8 and 9 are built and tested.** `train_ladder.sh 7` runs them after rung 7:
-  - rung 8: the teacher also sees 90 randomized dynamics values, for sim-to-real;
+  - rung 8: the teacher also sees every randomized dynamics value (90) and the rest of the
+    simulator's state (94 more: true torques, accelerations, foot positions and heights...),
+    for sim-to-real;
   - rung 9: every kind of ground scales from easy to hard by row (stairs 2-18 cm, rough
     0-10 cm, boulders 3-15 cm), within what a trotting Go2 can climb (research note:
     [research_terrain_and_privileged_state.md](research_terrain_and_privileged_state.md)).
 - **Next:**
   1. rungs 7 → 8 → 9 (~38 h, `bash scripts/train_ladder.sh 7`);
   2. the 10000-iteration teacher on rung 9's setup (COMMANDS.md 4d);
-  3. before distilling: build the Student task with the rung's teacher inputs, and check
-     that the student can reconstruct each part of `dynamics`;
-  4. seed 2 of rung 6 when the GPU is free.
+  3. before distilling: check that the student can reconstruct each part of `dynamics`
+     (the `Rung<N>-Student` tasks now load a ladder teacher, see
+     [The student's sensors](#the-students-sensors-every-go2-edu-sensor-4-nov));
+  4. calibrate the robot's foot force sensors before the first export;
+  5. seed 2 of rung 6 when the GPU is free.
 
 ## Changelog: every change, in order
 
@@ -68,6 +72,7 @@ everything here are in [COMMANDS.md](../COMMANDS.md).
 | 4 Nov | Rung 8 "dynamics": the teacher also sees 90 randomized dynamics values (`mdp.robot_dynamics`) | sim-to-real: the teacher learns the best response per robot, the student learns to infer it | `ea62402` | built and tested; trains after rung 7 |
 | 4 Nov | Rung 9 "hard terrain": `PGTT_HARD_TERRAINS_CFG`, stairs 2-18 cm, rough ground scaling 0-10 cm, boulders 3-15 cm, swing cap 21 cm | a gradient from flat to big obstacles, within what a trotting Go2 can climb | `ea62402` | built and tested; trains after rung 8 |
 | 4 Nov | `physics_exploded` termination: a joint faster than 100 rad/s or the base faster than 20 m/s ends the episode | rung 7 rerun, iteration 6: some robots' physics blew up without turning NaN (hip angles ~10⁶ rad, `default_pose` −2×10¹³ per episode) | `18e7e21` | the exploded robots get reset instead of feeding garbage into the batch |
+| 4 Nov | Rung 8 also gives the teacher the rest of the sim state (94 values, privileged 143 → 237) and reads joints with the encoder bias, as the robot does; the student gets every Go2 EDU sensor (`student_sensors`: accelerometer, motor torque estimate, foot force sensors, with sim stand-ins and fault models); `Rung<N>-Student` tasks; export and C++ for the new sensors; `eval_gait.py --terrain` | the teacher should know everything the sim knows, the deployed student should use every sensor the robot has; the old Student task could not load a ladder teacher | (this commit) | tested: a rung 9 teacher loads into `Rung9-Student`, distills, exports (ONNX = PyTorch to 1e-7); 34 tests pass. Not yet trained |
 | 3 Nov | Rung 7: heading commands for 80% of the robots (stiffness 0.5) | pre-flight review: with free yaw rates even a perfect walker was promoted by the terrain curriculum in only 52% of episodes | `d437833` | perfect walker promoted 84%, demoted 14% |
 
 ## All runs
@@ -972,7 +977,31 @@ Checked against the built rung 7 config, the official PGTT code and the legged_g
   | per joint: joint friction [Nm] and encoder bias [rad] | 12 each |
   | motor delay [physics steps] | 1 |
 
-  The privileged group grows from 53 to 143 values.
+  The privileged group grows from 53 to 143 values, and to 237 with the full state below.
+- **And the rest of the simulator's state (added 4 Nov, before rung 8 first ran):** 94 more
+  values, so nothing the sim knows is hidden from the teacher:
+
+  | Term | Values | What |
+  |---|---|---|
+  | `true_ang_vel`, `true_gravity`, `true_joint_pos`, `true_joint_vel` | 3 + 3 + 12 + 12 | its own readings without noise or delay |
+  | `true_lin_acc` | 3 | true acceleration (IMU site, gravity included), clipped ±50 m/s² |
+  | `joint_torques` | 12 | true motor torques, with this robot's gains, delay and strength |
+  | `motor_target_error` | 12 | the delayed target the motor is tracking now, minus the joint angle |
+  | `base_height` | 1 | trunk height above the ground under it |
+  | `foot_pos`, `foot_vel` | 12 + 12 | feet relative to the trunk, in the trunk frame |
+  | `foot_clearance` | 4 | each foot's height above the ground under it |
+  | `foot_contact_time` | 8 | seconds in the air / on the ground per foot, capped at 2 s |
+
+  Already there before: true velocity, contacts, contact forces and normals, foot friction,
+  thigh/shank contact, the push force, and the clean height map. Not given: the terrain
+  type and curriculum row (the map shows the ground itself) and velocity kicks (instant;
+  their effect is in the true velocity). The critic sees all of it too.
+- **And the encoder bias shifts the joint readings** (`joint_pos`, `joint_pos_history` with
+  `biased=True`). Rung 4's encoder-bias randomization offset only the motor target, so the
+  sim read the true angle. On the robot the encoder both reads and servos the biased angle.
+  The difference mattered for the student's torque estimate: Kp·(target − q) then carried
+  −Kp·bias (±0.6 Nm), a sim-only signal (correlation with the bias −0.5 on rung 7's setup,
+  0.0 with the fix, measured).
 - **Why (sim-to-real):** the real robot's mass, motors and delays differ from the model. A
   teacher that is *told* them learns the best response for each robot. The student can't be
   told: it infers them from its history (the GRU belief encoder) and reconstructs them in its
@@ -980,9 +1009,9 @@ Checked against the built rung 7 config, the official PGTT code and the legged_g
   every value reads nominal (×1, 0).
 - **Iterations:** 3000 (~8 h), on rung 7's terrain. Compare its curves with rung 7's at the
   same iteration: the extra input should help or change nothing.
-- **Before distilling:** the Student task builds its own teacher inputs (53 privileged values,
-  no `dynamics`), so a rung 8+ teacher does not load into it yet. It must be built from the
-  rung's config first.
+- **Distilling:** `Mjlab-Velocity-PGTT-Rung8-Student-Unitree-Go2` (and Rung7/Rung9) is the rung's
+  own environment plus the student's sensors, so the teacher loads unchanged (tested). The
+  old Student task (53 privileged values) does not load a ladder teacher.
 - **Compared with the literature** (doc/research_terrain_and_privileged_state.md):
   - Miki 2022 gives its teacher 50 values: contacts, forces, normals, friction, shank contact,
     external force, airtime.
@@ -1031,6 +1060,79 @@ Checked against the built rung 7 config, the official PGTT code and the legged_g
   - tests `test_hard_terrain_grows_with_the_row` and `test_rungs_8_and_9`.
 - **Iterations:** 6000 (~15 h). The 10000-iteration teacher is this rung's setup.
 
+### The student's sensors: every Go2 EDU sensor (4 Nov)
+
+The teacher reads true sim values (above); the student is what runs on the robot, so it reads
+the robot's sensors. Until 4 Nov it used only the IMU's gyro and orientation, the joints and
+the LiDAR map. Now it uses every Go2 EDU sensor that tells it something about walking, each
+with a sim stand-in that behaves like the real sensor, errors included:
+
+| EDU sensor (LowState) | Student input | Sim stand-in | Errors simulated |
+|---|---|---|---|
+| IMU gyro, orientation | `base_ang_vel`, `projected_gravity` (group `policy`) | MuJoCo gyro, true orientation | noise, 0-20 ms late (unchanged) |
+| joint encoders | `joint_pos`, `joint_vel` (`policy`) | true joint state | noise, encoder bias, 0-20 ms late (unchanged) |
+| L1 LiDAR | `height_noisy` | simulated head LiDAR, gridded like the robot's bridge | drift, offset, outliers, gaps, shifted or missing maps, 0-60 ms late (unchanged) |
+| **IMU accelerometer** (`imu_state.accelerometer`) | `base_lin_acc` (group `student_sensors`) | MuJoCo accelerometer at the IMU site [m/s², gravity included] | per-episode bias ±0.3, noise ±0.5, clipped ±50, 0-20 ms late |
+| **motor torque estimate** (`motor_state.tau_est`) | `motor_torque` | Kp·(target − q) − Kd·q̇ with the **nominal** gains, on the delayed target, clipped to the nominal limit [Nm] | per-episode bias ±0.3, noise ±0.5, 0-20 ms late; clipped ±23.5 Nm on the robot too |
+| **foot force sensors** (`foot_force`) | `foot_force` | contact force per foot / (robot weight / 4): 0 in the air; standing ~0.66 per front foot and ~1.34 per hind foot (the Go2 carries more on its hind legs) | per foot and episode: gain 0.7-1.3, offset ±0.15, stuck sensor 3%; dead channel (all 0) 5%; noise ±0.1; 0-20 ms late |
+
+**Why the torque estimate uses the nominal gains.** On the robot the PD loop runs on the
+motor driver with the gains we send, and `tau_est` is the driver's current times the
+nominal torque constant. So it reports the torque the driver *commands*, and a motor that
+is really weaker or stronger doesn't show. The sim's true torque (`joint_torques`) contains
+this robot's randomized Kp, Kd and strength: as a student input, the student would read them
+off it in sim (the nominal formula already explains ~96% of the true torque's variance in rung 4; the rest is those parameters and the delay), and the robot's
+`tau_est` would never give them. The delay does show, on the robot too, because the driver
+tracks the late target. Measured: the stand-in differs from the true torque by 0.45 Nm on
+average under rung 9's randomization, and matches it exactly with nominal gains (test).
+
+**Why foot force has a fault model, not just noise.** The Go2's foot sensors are uncalibrated
+and fail in correlated ways: offsets, gain errors, a sensor stuck for a while. With only
+per-step noise the student would learn to trust a channel that is clean on average. The gait
+clock already gives the planned contacts, so what this adds is the unplanned ones: a foot
+that lands early on a step, or misses it.
+
+**Known approximations:**
+- The foot force stand-in is the whole contact force (friction included); the real sensor
+  measures roughly along the leg. The gain range partly covers this.
+- Each sensor gets its own 0-20 ms delay; on the robot they all arrive in the same LowState
+  message. That adds noise, not a leak.
+- The sim's motors stop at 23.5 Nm on every joint; the real calf motors can give ~45 Nm, so
+  the robot clips `tau_est` to the training range (`deploy.yaml` clip).
+
+**Not used:**
+- **The front camera.** RGB only, no depth. Using it would need a learned perception model
+  and rendering every step in training; the LiDAR already gives the ground's shape.
+- **Motor temperatures.** The sim has no thermal model, so there is nothing true to train on.
+  Hot motors weaken; the torque-limit randomization covers that range.
+- **Battery voltage** and the robot's own `foot_force_est`: no physics behind them in the sim.
+
+**On the robot:** `deploy/include/unitree_articulation.h` reads the three new fields;
+`observations.h` implements `imu_accelerometer`, `joint_tau_est` and `foot_force`;
+`scripts/export_deploy.py` writes them into `deploy.yaml` in the student's order (checked
+against the network's input size and by a test). The C++ was not compiled here (no Eigen or
+Unitree SDK on the laptop): build it on the robot PC before the first run.
+
+**Calibrating the foot force sensors** (once per robot, before the first export). The feet
+don't carry equal loads (hind ~2× front), so each foot is calibrated to read, standing on
+the robot, what it read standing in the sim:
+1. Robot hanging or lying on its back, feet in the air: record each foot's raw `foot_force`
+   (average over a few seconds). That is the offset, in SDK order FR, FL, RR, RL.
+2. Robot standing still on flat ground in the policy's default pose (the controller's stand
+   state, before the policy starts): record the raw readings again.
+3. Pass both to `export_deploy.py --foot-force-offset ... --foot-force-standing ...`. The
+   export simulates the same stand, measures each foot's load (`sim_standing` in
+   `deploy.yaml`) and sets `scale = sim_standing / (standing − offset)` per foot. Without
+   both it refuses to run for a student that reads `foot_force`.
+4. Also log the readings while walking and on stairs: if a foot often reads far outside
+   0-3 after calibration, or sticks, the fault model needs updating before training the
+   student.
+
+**What to check after distilling:** the student's reconstruction error per part (velocity,
+contacts, `dynamics`, ...), and a student trained without `student_sensors` as the baseline.
+If the new sensors don't lower fall rate or tracking error under their faults, or a student
+with them does worse when they fail mid-episode, they come out.
+
 ### How each rung is judged
 
 | | Automatic, by `train_ladder.sh` | By hand, before trusting the rung |
@@ -1057,7 +1159,8 @@ Checked against the built rung 7 config, the official PGTT code and the legged_g
 | rung 7 again | 3 Nov 16:55: the first attempt with the fixes stopped at once with `Warp CUDA error 2: out of memory`. Most likely a leftover viewer or check still held the 3070 (the same rung 7 had run at 4096 robots that morning, and the fixes only free memory). The 17:34 attempt failed the same way. `nvidia-smi` then showed the cause: another user's training (`Unitree-Go2-Flat`, `/mnt/ubuntu/chirag/marl_quadruped`, 2096 robots, started 16:18) holding 1.3 GB. To start once it ends (~19:40 at its pace) |
 | rung 7, third try (4 Nov) | started with all fixes: 9.26 s/iteration. Its first log showed robots with blown-up physics (`default_pose` −2×10¹³), fixed with `physics_exploded` (`18e7e21`); restart from that commit on |
 | rung 7, with the guard (4 Nov) | running. At iteration 26: 9.71 s/iteration (~16 h), every reward term normal-sized again, `nan_state` 0, `physics_exploded` 1.2 (~10% of episode endings: to watch, should fall as the gait forms), `terrain_levels` 0.55 (down from 1.6, normal before it walks) |
-| 8 dynamics, 9 hard terrain | built and tested (`ea62402`); run after rung 7 with `train_ladder.sh 7` |
+| rung 7 at iteration 3923 | healthy: noise std 0.25, `terrain_levels` **5.48** (from 0.55), speed ratio 0.84 (with training noise), legs down 0.029, base 0.275 m, `physics_exploded` **0.05** (from 1.2: it was the early flailing), falls low (`fell_over` 0.3, `body_contact` 1.4), episode length 801 |
+| 8 dynamics, 9 hard terrain | built and tested (`ea62402`); run after rung 7 with `train_ladder.sh 7`. Rung 8 now also gets the full sim state (237 privileged values, 4 Nov): it must start from that commit |
 
 **Seen in the viewer (rungs 1-4):**
 - In rungs 1-3 the hind legs kneel slightly at low commanded speeds, sometimes with the body

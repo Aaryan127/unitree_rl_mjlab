@@ -4,9 +4,17 @@
 #pragma once
 
 #include "isaaclab/assets/articulation/articulation.h"
+#include <type_traits>
+#include <utility>
 
 namespace unitree
 {
+
+// Go2's LowState has foot force sensors; the humanoids' (unitree_hg) does not.
+template <typename Msg, typename = void>
+struct has_foot_force : std::false_type {};
+template <typename Msg>
+struct has_foot_force<Msg, std::void_t<decltype(std::declval<Msg&>().foot_force())>> : std::true_type {};
 
 template <typename LowStatePtr>
 class BaseArticulation : public isaaclab::Articulation
@@ -39,10 +47,22 @@ public:
         // The SDK updates the joystick under this same mutex. Copy the axes so
         // the policy thread never races the FSM's joystick update.
         data.velocity_axes = {lowstate->joystick.ly(), -lowstate->joystick.lx(), -lowstate->joystick.rx()};
-        // joint positions and velocities
+        // accelerometer (the student's base_lin_acc)
+        for(int i(0); i<3; i++) {
+            data.root_lin_acc_b[i] = lowstate->msg_.imu_state().accelerometer()[i];
+        }
+        // joint positions, velocities and torque estimates (tau_est: the student's motor_torque)
         for(int i(0); i< data.joint_ids_map.size(); i++) {
             data.joint_pos[i] = lowstate->msg_.motor_state()[data.joint_ids_map[i]].q();
             data.joint_vel[i] = lowstate->msg_.motor_state()[data.joint_ids_map[i]].dq();
+            data.joint_tau_est[i] = lowstate->msg_.motor_state()[data.joint_ids_map[i]].tau_est();
+        }
+        // foot force sensors, raw counts (the student's foot_force, calibrated in observations.h)
+        using Msg = std::decay_t<decltype(lowstate->msg_)>;
+        if constexpr (has_foot_force<Msg>::value) {
+            for(int i(0); i<4; i++) {
+                data.foot_force_raw[i] = static_cast<float>(lowstate->msg_.foot_force()[i]);
+            }
         }
     }
 

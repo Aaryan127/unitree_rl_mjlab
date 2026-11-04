@@ -164,3 +164,64 @@ class HeightScanNoiseModel(NoiseModel):
     )
     missing = (torch.rand_like(data) < cfg.missing_prob) | self._blind
     return torch.where(missing, torch.zeros_like(noisy), noisy)
+
+
+class FootForceNoiseModel(NoiseModel):
+  """Faults of the Go2's foot force sensors, applied to the sim's per-foot load.
+
+  The real sensors are uncalibrated and fail in correlated ways, so beyond per-step
+  jitter (noise_cfg) this models, per episode and foot:
+    - a gain error and an offset (calibration that is off)
+    - a stuck sensor: the reading freezes at a random value for the whole episode
+    - a dead channel: every foot reads 0 (the robot sends 0 for no data)
+  Readings never go below 0 (a load sensor cannot pull).
+  """
+
+  def __init__(
+    self,
+    noise_model_cfg: noise_cfg.FootForceNoiseModelCfg,
+    num_envs: int,
+    device: str,
+  ):
+    super().__init__(noise_model_cfg, num_envs, device)
+    self._cfg = noise_model_cfg
+    self._num_feet: int | None = None
+    self._gain = torch.ones((num_envs, 1), device=device)
+    self._offset = torch.zeros((num_envs, 1), device=device)
+    self._stuck = torch.zeros((num_envs, 1), dtype=torch.bool, device=device)
+    self._stuck_value = torch.zeros((num_envs, 1), device=device)
+    self._dead = torch.zeros((num_envs, 1), dtype=torch.bool, device=device)
+
+  def _ensure_shape(self, num_feet: int) -> None:
+    if self._num_feet == num_feet:
+      return
+    self._num_feet = num_feet
+    shape = (self._num_envs, num_feet)
+    self._gain = torch.ones(shape, device=self._device)
+    self._offset = torch.zeros(shape, device=self._device)
+    self._stuck = torch.zeros(shape, dtype=torch.bool, device=self._device)
+    self._stuck_value = torch.zeros(shape, device=self._device)
+    self.reset()
+
+  @override
+  def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
+    cfg = self._cfg
+    indices = slice(None) if env_ids is None else env_ids
+    n, feet = self._gain[indices].shape
+
+    def uniform(lo: float, hi: float, cols: int) -> torch.Tensor:
+      return torch.rand((n, cols), device=self._device) * (hi - lo) + lo
+
+    self._gain[indices] = uniform(*cfg.gain_range, feet)
+    self._offset[indices] = uniform(-cfg.max_offset, cfg.max_offset, feet)
+    self._stuck[indices] = torch.rand((n, feet), device=self._device) < cfg.stuck_prob
+    self._stuck_value[indices] = uniform(0.0, cfg.max_stuck_value, feet)
+    self._dead[indices] = torch.rand((n, 1), device=self._device) < cfg.dead_prob
+
+  @override
+  def __call__(self, data: torch.Tensor) -> torch.Tensor:
+    self._ensure_shape(data.shape[-1])
+    noisy = super().__call__(data * self._gain + self._offset)  # jitter on the bad calibration
+    noisy = torch.where(self._stuck, self._stuck_value, noisy)
+    noisy = torch.where(self._dead, torch.zeros_like(noisy), noisy)
+    return noisy.clamp(min=0.0)

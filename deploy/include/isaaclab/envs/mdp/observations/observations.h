@@ -5,6 +5,7 @@
 
 #include "isaaclab/envs/manager_based_rl_env.h"
 #include "isaaclab/devices/height_map/height_map.h"
+#include <algorithm>
 #include <cmath>
 
 namespace isaaclab
@@ -160,6 +161,39 @@ REGISTER_OBSERVATION(gait_phase_pgtt)
         obs[n + i] = std::sin(phi);
     }
     obs[2 * n] = f;
+    return obs;
+}
+
+// IMU accelerometer [m/s^2], gravity included. Must match the student's base_lin_acc
+// (mdp.builtin_sensor "robot/imu_lin_acc").
+REGISTER_OBSERVATION(imu_accelerometer)
+{
+    auto & data = env->robot->data.root_lin_acc_b;
+    return std::vector<float>(data.data(), data.data() + data.size());
+}
+
+// Motor torque estimates [Nm] in sim joint order. Must match mdp.motor_torque_estimate.
+REGISTER_OBSERVATION(joint_tau_est)
+{
+    auto & data = env->robot->data.joint_tau_est;
+    return std::vector<float>(data.data(), data.data() + data.size());
+}
+
+// Foot force sensors in units of the nominal per-foot load (robot weight / 4), as
+// mdp.foot_force_sensor: (raw - offset) * scale per SDK foot, then reordered to the sim's
+// foot order (foot_ids_map[i] = SDK index of sim foot i). offset/scale come from the
+// calibration in deploy.yaml (see doc/experiments.md, "Calibrating the foot force sensors").
+REGISTER_OBSERVATION(foot_force)
+{
+    const auto ids = params["foot_ids_map"].as<std::vector<int>>();
+    const auto offset = params["offset"].as<std::vector<float>>();
+    const auto scale = params["scale"].as<std::vector<float>>();
+    const auto & raw = env->robot->data.foot_force_raw;
+    std::vector<float> obs(ids.size());
+    for (size_t i = 0; i < ids.size(); ++i) {
+        const int sdk = ids[i];
+        obs[i] = std::max(0.0f, (raw[sdk] - offset[sdk]) * scale[sdk]);
+    }
     return obs;
 }
 

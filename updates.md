@@ -31,13 +31,39 @@ Every training run, change and result (the experiment log):
 - [x] Rung 8 (privileged dynamics) and rung 9 (hard terrain gradient, boulders): built and tested
 - [ ] Rungs 8 and 9 on GPU (they follow rung 7 automatically)
 - [ ] Full teacher training on GPU (rung 9's setup, 10k iterations, 4096 envs)
-- [ ] Student task with the rung 8+ teacher inputs (`dynamics`), and a per-part reconstruction check
-- [ ] Full student distillation on GPU (check first that the student task loads a rung-7 teacher)
+- [x] Student task with the rung 8+ teacher inputs: `Rung<N>-Student` (rung env + student sensors), tested
+- [x] Student uses every Go2 EDU sensor: accelerometer, motor torque estimate, foot force (sim stand-ins + faults), export + C++
+- [ ] Per-part reconstruction check after distilling
+- [ ] Calibrate the robot's foot force sensors (offset, scale per foot) before the first export
+- [ ] Full student distillation on GPU (`Rung9-Student`)
 - [ ] Play both in simulation; check stairs success per terrain level
 - [ ] Build `go2_ctrl` on the robot (needs unitree_sdk2 + cyclonedds; not buildable on the dev laptop)
 - [ ] Real robot: blind test on flat ground first (no height map -> zeros)
 - [x] ROS 2 PointCloud2 bridge: LiDAR points -> robot-centric 11 x 9 grid -> UDP
 - [ ] Confirm LiDAR topic, TF, coverage, and timing on the physical Go2
+
+## 2026-11-04: the full sim state for the teacher, every EDU sensor for the student
+- Rung 8's teacher also gets the rest of the simulator's state, 94 values: noise-free
+  readings, true torques and acceleration, the delayed motor target, trunk height, foot
+  positions, velocities, heights and air/contact times. Privileged 143 → 237. From rung 8
+  the joint readings include the encoder bias, as on the robot (otherwise the torque
+  estimate leaked the bias).
+- The student (what runs on the robot) gets the Go2 EDU sensors it lacked, in a new group
+  `student_sensors` kept out of `policy` so the frozen teacher still matches:
+  - accelerometer (per-episode bias, noise, delay);
+  - motor torque estimate, modelled as the robot's `tau_est` reports it: nominal-gain PD on
+    the delayed target, never the sim's randomized true torque (that would leak the
+    randomized gains);
+  - foot force sensors, per foot weight-normalized, with calibration errors, stuck sensors
+    and dead episodes. Calibrated per foot against the sim's standing load (hind feet carry
+    ~2× the front), from raw readings in the air and standing.
+  Not used: the camera (no depth), motor temperature and battery (no physics in the sim).
+- `Mjlab-Velocity-PGTT-Rung{7,8,9}-Student-Unitree-Go2`: the rung's environment plus the
+  student's sensors. A rung 9 teacher loads and distills (tested).
+- Export writes the new observations in the student's order with their clips and the foot
+  force calibration; C++ reads `accelerometer`, `tau_est`, `foot_force` (guarded for the
+  humanoids). `check_cpp_policy.py` takes the input size from the model.
+- `eval_gait.py --terrain flat`, to compare rung 6 and rung 7 on the same ground.
 
 ## 2026-11-04: rung 7 rerun, the explosion guard, rungs 8 and 9
 - Rung 7 rerun with the fixes: **9.26 s per iteration** (was 80 s), so ~15.5 h for 6000. `nan_state` 0.

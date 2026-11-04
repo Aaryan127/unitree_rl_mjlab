@@ -9,10 +9,12 @@ from .env_cfgs import (
   unitree_go2_pgtt_repro_env_cfg,
   unitree_go2_pgtt_repro_smooth_env_cfg,
   unitree_go2_pgtt_rung_env_cfg,
+  unitree_go2_pgtt_rung_student_env_cfg,
   unitree_go2_rough_env_cfg,
 )
 from .rl_cfg import (
   unitree_go2_pgtt_repro_runner_cfg,
+  unitree_go2_pgtt_rung_student_runner_cfg,
   unitree_go2_pgtt_student_runner_cfg,
   unitree_go2_pgtt_teacher_runner_cfg,
   unitree_go2_ppo_runner_cfg,
@@ -79,4 +81,15 @@ for _rung in range(1, len(RUNG_NAMES) + 1):
     play_env_cfg=unitree_go2_pgtt_rung_env_cfg(_rung, play=True),
     rl_cfg=unitree_go2_pgtt_repro_runner_cfg(),
     runner_cls=OnPolicyRunner,
+  )
+
+# Distilling a ladder teacher (rungs 7-9, the terrain ones): the rung's own environment
+# plus the student's sensors, so the frozen teacher sees exactly what it trained on.
+for _rung in (7, 8, 9):
+  register_mjlab_task(
+    task_id=f"Mjlab-Velocity-PGTT-Rung{_rung}-Student-Unitree-Go2",
+    env_cfg=unitree_go2_pgtt_rung_student_env_cfg(_rung),
+    play_env_cfg=unitree_go2_pgtt_rung_student_env_cfg(_rung, play=True),
+    rl_cfg=unitree_go2_pgtt_rung_student_runner_cfg(),  # type: ignore[arg-type]
+    runner_cls=DistillationRunner,
   )

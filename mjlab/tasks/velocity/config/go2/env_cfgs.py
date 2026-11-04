@@ -388,6 +388,10 @@ def unitree_go2_pgtt_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # the external force on the trunk. Only the teacher and critic see these.
   privileged = cfg.observations["privileged"].terms
   privileged["foot_friction"].params["asset_cfg"].geom_names = foot_geoms
+  # The student's torque estimate never exceeds the sim's motor limit; clip the robot's
+  # tau_est the same way (the real calf motors can report more, ~45 Nm).
+  limit = go2_constants.GO2_ACTUATOR_GO2HV.effort_limit
+  cfg.observations["student_sensors"].terms["motor_torque"].clip = (-limit, limit)
   privileged["base_external_wrench"].params["asset_cfg"].body_names = ("base_link",)
 
   # Hips only, as in PGTT: keeps the legs from splaying sideways without fighting the
@@ -493,8 +497,10 @@ def unitree_go2_pgtt_repro_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   # No student LiDAR: its map (group height_noisy) is not a teacher input, but its 1440
   # rays per robot were tested against every terrain geom (4049 boxes on stairs) at every
-  # step, ~75% of rung 7's step time. The student task builds its own config and keeps it.
+  # step, ~75% of rung 7's step time. The student task (unitree_go2_pgtt_rung_student_env_cfg)
+  # puts it back, with the student's other sensors (student_sensors).
   cfg.observations.pop("height_noisy", None)
+  cfg.observations.pop("student_sensors", None)
   cfg.scene.sensors = tuple(s for s in cfg.scene.sensors if s.name != "lidar")
   # A robot whose physics turns NaN/Inf is reset (counts as a fall) instead of putting
   # NaN into the batch, where one robot poisons the whole update (rung 7 crashed at
@@ -708,14 +714,48 @@ def unitree_go2_pgtt_rung_env_cfg(rung: int, play: bool = False) -> ManagerBased
       twist.heading_control_stiffness = 0.5  # type: ignore[attr-defined]
       twist.rel_heading_envs = 0.8  # type: ignore[attr-defined]
       twist.ranges.heading = (-math.pi, math.pi)  # type: ignore[attr-defined]
-  if rung >= 8:  # dynamics
+  if rung >= 8:  # dynamics and the rest of the simulator's state
     # Sim-to-real: the teacher is told this robot's mass, centre of mass, motor strength,
     # gains, joint friction, delay and encoder bias (90 values), so it can learn the best
     # response to each robot; the student learns to infer them from its history and
     # reconstructs them (the decoder sizes itself from this group).
-    cfg.observations["privileged"].terms["dynamics"] = ObservationTermCfg(
-      func=mdp.robot_dynamics
-    )
+    privileged = cfg.observations["privileged"].terms
+    privileged["dynamics"] = ObservationTermCfg(func=mdp.robot_dynamics)
+    # The encoder bias (rung 4's randomization) now also shifts the joint readings, as on
+    # the robot, where the encoder both reads and servos q + bias. Before, it only offset
+    # the motor target, so q read true: the student's torque estimate, Kp (target - q),
+    # then showed -Kp x bias, a value the robot's tau_est never carries.
+    for group, term in (("policy", "joint_pos"), ("proprio_history", "joint_pos_history")):
+      cfg.observations[group].terms[term].params["biased"] = True
+    # Everything else the sim knows (94 values), so the teacher never has to guess what
+    # a sensor would only estimate: the noise-free, undelayed versions of its own
+    # readings, the true motor torques and the delayed target the motors are tracking,
+    # the true acceleration, the trunk's height above the ground, and each foot's
+    # position, velocity, height above the ground and air/contact time.
+    # Already there: true velocity, contacts, contact forces and normals, friction,
+    # thigh/shank contact, the push force, and the clean height map (group height).
+    feet = SceneEntityCfg("robot", site_names=_LEGS)
+    scan = {"sensor_name": "height_scanner"}
+    privileged.update({
+      "true_ang_vel": ObservationTermCfg(func=mdp.builtin_sensor, params={"sensor_name": "robot/imu_ang_vel"}),
+      "true_gravity": ObservationTermCfg(func=mdp.projected_gravity),
+      "true_joint_pos": ObservationTermCfg(func=mdp.joint_pos_rel),
+      "true_joint_vel": ObservationTermCfg(func=mdp.joint_vel_rel),
+      "true_lin_acc": ObservationTermCfg(
+        func=mdp.builtin_sensor, params={"sensor_name": "robot/imu_lin_acc"}, clip=(-50.0, 50.0)
+      ),
+      "joint_torques": ObservationTermCfg(func=mdp.joint_torques),
+      "motor_target_error": ObservationTermCfg(func=mdp.motor_target_error),
+      "base_height": ObservationTermCfg(func=mdp.base_height, params=scan),
+      "foot_pos": ObservationTermCfg(func=mdp.foot_pos_b, params={"asset_cfg": feet}),
+      "foot_vel": ObservationTermCfg(func=mdp.foot_vel_b, params={"asset_cfg": feet}),
+      "foot_clearance": ObservationTermCfg(
+        func=mdp.foot_clearance, params={**scan, "asset_cfg": feet}
+      ),
+      "foot_contact_time": ObservationTermCfg(
+        func=mdp.foot_contact_time, params={"sensor_name": "feet_ground_contact"}
+      ),
+    })
   if rung >= 9:  # hard terrain
     old = cfg.scene.terrain.terrain_generator if cfg.scene.terrain is not None else None
     if old is not None:
@@ -726,4 +766,22 @@ def unitree_go2_pgtt_rung_env_cfg(rung: int, play: bool = False) -> ManagerBased
     # Swing apex = 10 cm + the step height near the foot, capped here (was 15 cm): the
     # tallest stairs in the recipe need ~20 cm of lift above the lower step.
     cfg.rewards["foot_phase"].params["max_terrain_delta"] = PGTT_HARD_MAX_STEP + 0.03
+  return cfg
+
+
+def unitree_go2_pgtt_rung_student_env_cfg(rung: int = 9, play: bool = False) -> ManagerBasedRlEnvCfg:
+  """The environment to distill a rung-`rung` teacher in: exactly its training setup, plus
+  the student's sensors (the rungs leave them out to train faster):
+
+    height_noisy     the map built from the simulated head LiDAR (needs the lidar sensor)
+    student_sensors  accelerometer, motor torque estimate, foot force sensors
+
+  With the student's `policy` group these are all the Go2 EDU's sensors the student reads
+  (the front camera and motor temperatures are not used, see doc/experiments.md).
+  """
+  cfg = unitree_go2_pgtt_rung_env_cfg(rung, play=play)
+  teacher = unitree_go2_pgtt_env_cfg(play=play)  # where both groups and the LiDAR are defined
+  for group in ("height_noisy", "student_sensors"):
+    cfg.observations[group] = deepcopy(teacher.observations[group])  # keeps their delays
+  cfg.scene.sensors = cfg.scene.sensors + tuple(s for s in teacher.scene.sensors if s.name == "lidar")
   return cfg

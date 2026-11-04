@@ -20,7 +20,7 @@ table reports per scenario:
 Below it: the lowest any non-foot body origin gets (knee clearance; with feet-only
 collisions nothing else would ever report this).
 
-  python scripts/eval_gait.py --checkpoint-file logs/.../model_2500.pt
+  python scripts/eval_gait.py --checkpoint-file logs/.../model_2500.pt [--terrain flat]
 """
 
 from copy import deepcopy
@@ -34,6 +34,7 @@ import mjlab.tasks  # noqa: F401
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl import RslRlVecEnvWrapper
 from mjlab.rsl_rl.runners import OnPolicyRunner
+from mjlab.tasks.velocity.terrain_profiles import TerrainProfile, set_terrain_profile
 from mjlab.utils.checkpoint import nominal_eval_cfg
 
 # name, vx, vy, wz, gait frequency [Hz]
@@ -57,6 +58,9 @@ SHORT = 3  # policy steps (60 ms): shorter air gaps are bounces, not swings
 @dataclass
 class GaitEvalConfig:
   checkpoint_file: str
+  terrain: TerrainProfile | None = None
+  """Default: the terrain the checkpoint was trained on. "flat" compares terrain and flat
+  teachers on equal ground."""
   seconds: float = 12.0
   settle: float = 3.0
   """Seconds ignored at the start (getting into the gait)."""
@@ -77,6 +81,8 @@ def run(cfg: GaitEvalConfig) -> dict[str, np.ndarray]:
   checkpoint = torch.load(cfg.checkpoint_file, weights_only=False, map_location="cpu")
   train_cfg = deepcopy(checkpoint["train_cfg"])
   env_cfg = nominal_eval_cfg(checkpoint["env_cfg"])
+  if cfg.terrain is not None:
+    set_terrain_profile(env_cfg, cfg.terrain)
   env_cfg.scene.num_envs = len(SCENARIOS) * cfg.robots_per_scenario
   env_cfg.seed = cfg.seed
   env_cfg.episode_length_s = 1e6

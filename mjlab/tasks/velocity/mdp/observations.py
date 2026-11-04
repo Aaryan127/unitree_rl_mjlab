@@ -20,6 +20,8 @@ import torch
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactSensor, RayCastSensor
+from mjlab.tasks.velocity.mdp.rewards import _foot_terrain, base_height_above_terrain
+from mjlab.utils.lab_api.math import quat_apply_inverse
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
@@ -180,6 +182,136 @@ def contact_normals(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
   sensor: ContactSensor = env.scene[sensor_name]
   assert sensor.data.normal is not None, f"'{sensor_name}' needs the 'normal' field."
   return sensor.data.normal.flatten(start_dim=1)
+
+
+##
+# Full simulator state for the teacher (rung 8+): everything the sim knows that the
+# other privileged terms do not already give. Privileged, never on the robot.
+##
+
+
+def _foot_pos_vel_b(
+  env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg
+) -> tuple[torch.Tensor, torch.Tensor]:
+  asset: Entity = env.scene[asset_cfg.name]
+  data = asset.data
+  quat = data.root_link_quat_w[:, None].expand(-1, len(asset_cfg.site_ids), -1)
+  rel = data.site_pos_w[:, asset_cfg.site_ids] - data.root_link_pos_w[:, None]
+  vel = data.site_lin_vel_w[:, asset_cfg.site_ids]
+  return quat_apply_inverse(quat, rel), quat_apply_inverse(quat, vel)
+
+
+def foot_pos_b(env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG) -> torch.Tensor:
+  """Foot positions relative to the trunk, in the trunk frame [m]. Shape: [B, feet * 3]."""
+  return _foot_pos_vel_b(env, asset_cfg)[0].flatten(1)
+
+
+def foot_vel_b(env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG) -> torch.Tensor:
+  """Foot velocities in the trunk frame [m/s], clipped to +-10. Shape: [B, feet * 3]."""
+  return _foot_pos_vel_b(env, asset_cfg)[1].flatten(1).clamp(-10.0, 10.0)
+
+
+def foot_clearance(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Each foot's height above the ground directly under it [m] (height-scan rays), clipped
+  to [-0.5, 1]. Shape: [B, feet]."""
+  foot_z, ground_z, _, _ = _foot_terrain(env, asset_cfg.site_ids, sensor_name, 0.05, asset_cfg.name)
+  return (foot_z - ground_z).clamp(-0.5, 1.0)
+
+
+def base_height(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
+  """Trunk height above the ground under it [m]; 0 if no ray is near. Shape: [B, 1]."""
+  height = base_height_above_terrain(env, sensor_name)
+  return torch.nan_to_num(height, nan=0.0).clamp(-1.0, 1.0).unsqueeze(-1)
+
+
+def foot_contact_time(env: ManagerBasedRlEnv, sensor_name: str, max_time: float = 2.0) -> torch.Tensor:
+  """Per foot: seconds in the air, then seconds on the ground, each capped at `max_time`.
+  Shape: [B, feet * 2]."""
+  data = env.scene[sensor_name].data
+  assert data.current_air_time is not None and data.current_contact_time is not None
+  return torch.cat([data.current_air_time, data.current_contact_time], dim=-1).clamp(max=max_time)
+
+
+def joint_torques(env: ManagerBasedRlEnv, asset_name: str = "robot") -> torch.Tensor:
+  """True motor torques [Nm], with this robot's randomized gains, delay and strength.
+  Shape: [B, motors]."""
+  asset: Entity = env.scene[asset_name]
+  return asset.data.actuator_force
+
+
+class _MotorJoints:
+  """Base for terms that need each motor's joint angle and speed, in motor order."""
+
+  def __init__(self, cfg, env: ManagerBasedRlEnv):
+    asset: Entity = env.scene[cfg.params.get("asset_name", "robot")]
+    model = env.sim.mj_model
+    ctrl = asset.indexing.ctrl_ids.cpu().numpy()
+    joints = model.actuator_trnid[ctrl, 0]
+    self._ctrl = asset.indexing.ctrl_ids
+    self._q_adr = torch.as_tensor(model.jnt_qposadr[joints], device=env.device)
+    self._v_adr = torch.as_tensor(model.jnt_dofadr[joints], device=env.device)
+
+  def _state(self, env: ManagerBasedRlEnv) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    data = env.sim.data
+    return data.ctrl[:, self._ctrl], data.qpos[:, self._q_adr], data.qvel[:, self._v_adr]
+
+
+class motor_target_error(_MotorJoints):
+  """Position target the motor is actually tracking now (after the delay) minus the joint
+  angle [rad]. Privileged: the delayed target exists only inside the sim. Shape: [B, motors]."""
+
+  def __call__(self, env: ManagerBasedRlEnv, asset_name: str = "robot") -> torch.Tensor:
+    target, q, _ = self._state(env)
+    return target - q
+
+
+class motor_torque_estimate(_MotorJoints):
+  """Sim stand-in for the Go2's per-motor torque estimate (LowState motor_state.tau_est).
+
+  On the robot the PD loop runs on the motor driver with the gains we send, and tau_est
+  is the driver's current times the nominal torque constant: it reports the torque the
+  driver commands, Kp (target - q) - Kd qd with the nominal Kp/Kd, clipped to the nominal
+  limit. It does not show a motor that is really weaker or stronger. So this computes the
+  same from the delayed target, the joint state and the model's nominal gains, never from
+  the sim's randomized ones (the true torque, joint_torques, would let the student read
+  the randomized gains off this input, which the robot's tau_est cannot do).
+  Shape: [B, motors] in Nm, motor order.
+  """
+
+  def __init__(self, cfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+    sim = env.sim
+    self._gain = sim.get_default_field("actuator_gainprm")[self._ctrl, 0]
+    self._bias_q = sim.get_default_field("actuator_biasprm")[self._ctrl, 1]
+    self._bias_v = sim.get_default_field("actuator_biasprm")[self._ctrl, 2]
+    self._limit = sim.get_default_field("actuator_forcerange")[self._ctrl, 1]
+
+  def __call__(self, env: ManagerBasedRlEnv, asset_name: str = "robot") -> torch.Tensor:
+    target, q, qd = self._state(env)
+    torque = self._gain * target + self._bias_q * q + self._bias_v * qd
+    return torch.maximum(torch.minimum(torque, self._limit), -self._limit)
+
+
+def foot_force_sensor(env: ManagerBasedRlEnv, sensor_name: str, asset_name: str = "robot") -> torch.Tensor:
+  """Sim stand-in for the Go2 EDU's foot force sensors (LowState foot_force).
+
+  Per foot, the contact force magnitude divided by robot weight / 4: the four sum to ~4
+  when standing, 0 in the air. They are not equal: in the default stand the Go2 carries
+  more on its hind legs (~0.66 per front foot, ~1.34 per hind foot). The real sensor
+  reports raw counts; export_deploy.py calibrates each foot against this sim's standing
+  value (deploy.yaml foot_force: offset, scale). Faults: FootForceNoiseModelCfg.
+  Shape: [B, feet].
+  """
+  sensor: ContactSensor = env.scene[sensor_name]
+  assert sensor.data.force is not None
+  asset: Entity = env.scene[asset_name]
+  mass = env.sim.get_default_field("body_mass")[asset.indexing.body_ids].sum()
+  per_foot = mass * 9.81 / sensor.data.force.shape[1]
+  return sensor.data.force.norm(dim=-1) / per_foot
 
 
 ##

@@ -13,13 +13,14 @@ real robot. It combines two papers:
   measured with a height map. The policy outputs plain joint targets.
 - **Teacher-student** (Miki et al. 2022, "Learning robust perceptive locomotion in the
   wild"): a teacher is trained with RL using a clean height map and privileged simulator
-  state. A student, which only has what the real robot has (proprioception and a
-  *noisy* height map), is then trained to imitate it, using a GRU belief encoder.
+  state. A student, which only has what the real robot has (proprioception, the Go2 EDU's
+  accelerometer, motor torque estimates and foot force sensors, and a *noisy* height map),
+  is then trained to imitate it, using a GRU belief encoder.
 
 ```
 Stage 1  Mjlab-Velocity-PGTT-Rung9-Unitree-Go2     PPO          -> logs/rsl_rl/go2_pgtt_repro
          (built step by step: Repro -> Repro-Smooth -> Rung1 ... Rung9, see below)
-Stage 2  Mjlab-Velocity-PGTT-Student-Unitree-Go2   distillation -> logs/rsl_rl/go2_pgtt_student
+Stage 2  Mjlab-Velocity-PGTT-Rung9-Student-Unitree-Go2  distillation -> logs/rsl_rl/go2_pgtt_rung_student
 Stage 3  scripts/export_deploy.py                  ONNX + deploy.yaml -> deploy/robots/go2/config/policy/pgtt/v0
 Stage 4  deploy/robots/go2 (C++)                   go2_ctrl on the robot
 ```
@@ -142,13 +143,13 @@ trains, into `go2_pgtt_teacher`, but its reward set never produced a walking pol
 
 **Stage 2, the student** (not yet run on a real teacher):
 ```bash
-python scripts/train.py Mjlab-Velocity-PGTT-Student-Unitree-Go2 --env.scene.num-envs=4096 \
+python scripts/train.py Mjlab-Velocity-PGTT-Rung9-Student-Unitree-Go2 --env.scene.num-envs=4096 \
   --teacher-checkpoint logs/rsl_rl/go2_pgtt_repro/<run>/model_<it>.pt
 ```
 Give `--teacher-checkpoint` explicitly: without it, the student takes the newest checkpoint in
-`go2_pgtt_teacher` (the old, non-walking teacher). The student task is built on the old teacher
-task's environment. Check that it loads a rung-7 teacher (same network and observation sizes)
-with a short smoke run before the real one.
+`go2_pgtt_repro`, which may be another rung. `Rung<N>-Student` (N = 7, 8, 9) is rung N's
+environment plus the student's sensors, so a rung-N teacher loads unchanged (tested for 9).
+The old `Mjlab-Velocity-PGTT-Student-Unitree-Go2` does not load a ladder teacher.
 
 Student losses to watch: `behavior` (action MSE vs teacher, should fall well below 0.01)
 and `reconstruction` (height map + privileged state decoded from the GRU).

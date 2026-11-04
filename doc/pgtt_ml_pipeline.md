@@ -86,8 +86,11 @@ weights ramp from 10% to full strength over `1500 × 24` training steps.
 
 The [teacher routing](../mjlab/tasks/velocity/config/go2/rl_cfg.py) concatenates
 `policy + proprio_history` for 138 actor body inputs, and uses the clean height 99 and
-privileged 53 separately (143 from rung 8). Its critic concatenates
-`critic + height + privileged` for 209 inputs (299 from rung 8). The student sees `policy` 54 and `height_noisy` 99. Clean heights and
+privileged 53 separately (237 from rung 8: dynamics plus the rest of the sim state). Its
+critic concatenates `critic + height + privileged` for 209 inputs (393 from rung 8). The
+student sees `policy` 54 plus `student_sensors` 19 (accelerometer, motor torque estimates,
+foot force sensors) and `height_noisy` 99: 172 inputs, every Go2 EDU sensor it uses
+(doc/experiments.md, "The student's sensors"). Clean heights and
 privileged data are present **only as training targets and teacher inputs** in stage 2.
 
 The student LiDAR simulation emits 16 elevation rings from `-80°` to `-10°` with 4°

@@ -15,22 +15,23 @@ def check(model: str) -> float:
   import platform
   if platform.machine() == "aarch64":
     runtime = root / "deploy/thirdparty/onnxruntime-linux-aarch64-1.22.0"
+  session = ort.InferenceSession(model, providers=["CPUExecutionProvider"])
+  n = session.get_inputs()[0].shape[-1]  # the student's input size (153, or 172 with student_sensors)
   with tempfile.TemporaryDirectory(prefix="pgtt-cpp-") as temp:
     exe = str(Path(temp) / "check_policy")
     subprocess.run(["g++", "-std=c++17", "-O2", "-pthread", "-I", str(root / "deploy/include"),
                     "-I", str(runtime / "include"), str(root / "tests/cpp/test_policy_runtime.cpp"),
                     str(runtime / "lib/libonnxruntime.so.1.22.0"),
                     "-Wl,-rpath," + str(runtime / "lib"), "-o", exe], check=True)
-    output = subprocess.check_output([exe, str(Path(model).resolve())], text=True)
+    output = subprocess.check_output([exe, str(Path(model).resolve()), str(n)], text=True)
   actual = np.array([[float(v) for v in line.split()[1:]] for line in output.splitlines()
                      if line.startswith("ACTION ")])
-  session = ort.InferenceSession(model, providers=["CPUExecutionProvider"])
   hidden = np.zeros((1, 1, 256), dtype=np.float32)
   expected = []
   for step in range(10):
     if step == 5:
       hidden.fill(0)
-    obs = np.sin((np.arange(153, dtype=np.float32) + step) * np.float32(0.1))[None]
+    obs = np.sin((np.arange(n, dtype=np.float32) + step) * np.float32(0.1))[None]
     actions, hidden = session.run(None, {"obs": obs, "h_in": hidden})
     expected.append(actions[0])
   error = float(np.max(np.abs(actual - np.array(expected))))

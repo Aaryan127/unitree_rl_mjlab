@@ -167,3 +167,22 @@ class HeightScanNoiseModelCfg(
   """Shift of up to this many cells in x and y (1 cell = scanner resolution)."""
   grid_shape: tuple[int, int] | None = None
   """(rows, cols) of the height grid = (y points, x points); needed for the shift."""
+
+
+@dataclass(kw_only=True)
+class FootForceNoiseModelCfg(NoiseModelCfg, class_type=noise_model.FootForceNoiseModel):
+  """Foot force sensor faults (see FootForceNoiseModel). Values are in units of robot
+  weight / 4, the unit of mdp.foot_force_sensor (standing: ~0.66 front, ~1.34 hind)."""
+
+  noise_cfg: NoiseCfg = field(default_factory=lambda: UniformNoiseCfg(n_min=-0.1, n_max=0.1))
+  """Per-step jitter."""
+  gain_range: tuple[float, float] = (0.7, 1.3)
+  """Per-episode, per-foot gain (calibration scale error)."""
+  max_offset: float = 0.15
+  """Per-episode, per-foot offset, uniform in [-max_offset, max_offset]."""
+  stuck_prob: float = 0.03
+  """Probability that a foot's sensor is stuck for the whole episode."""
+  max_stuck_value: float = 1.5
+  """A stuck sensor reads a constant uniform in [0, max_stuck_value]."""
+  dead_prob: float = 0.05
+  """Probability that the whole channel reads 0 for an episode."""

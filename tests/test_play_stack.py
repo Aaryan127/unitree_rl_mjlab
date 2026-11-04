@@ -50,7 +50,7 @@ class PlayStackTests(unittest.TestCase):
     cfg["task_id"] = TASK
     obs = TensorDict({name: torch.zeros(1, size) for name, size in {
       "policy": 54, "proprio_history": 84, "height": 99,
-      "height_noisy": 99, "privileged": 53, "critic": 57}.items()}, [1])
+      "height_noisy": 99, "student_sensors": 19, "privileged": 53, "critic": 57}.items()}, [1])
     with contextlib.redirect_stdout(io.StringIO()):
       policy = StudentTeacherWild(obs, cfg["obs_groups"], 12)
     with tempfile.TemporaryDirectory() as temp:

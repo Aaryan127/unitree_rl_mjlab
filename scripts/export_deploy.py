@@ -53,7 +53,13 @@ CPP_OBS_NAMES = {
   "actions": "last_action",
   "gait_phase": "gait_phase_pgtt",
   "height_scan": "height_scan",
+  # student_sensors (the Go2 EDU's other sensors):
+  "base_lin_acc": "imu_accelerometer",
+  "motor_torque": "joint_tau_est",
+  "foot_force": "foot_force",
 }
+# Go2 SDK foot order (lowstate foot_force index 0..3).
+GO2_SDK_FOOT_ORDER = ("FR", "FL", "RR", "RL")
 
 
 @dataclass
@@ -71,13 +77,86 @@ class ExportConfig:
   verify_steps: int = 200
   tolerance: float = 1e-4
   allow_legacy_config: bool = False
+  foot_force_offset: tuple[float, float, float, float] | None = None
+  """Raw foot_force reading of each foot in the air, SDK order FR, FL, RR, RL."""
+  foot_force_standing: tuple[float, float, float, float] | None = None
+  """Raw foot_force reading of each foot standing still on flat ground in the policy's
+  default pose, SDK order. Both are required when the student uses foot_force: calibrate
+  on the robot first (doc/experiments.md, "Calibrating the foot force sensors")."""
 
 
 def _term_cfg(params: dict, dim: int) -> dict:
   return {"params": params, "clip": None, "scale": [1.0] * dim, "history_length": 1}
 
 
-def build_deploy_yaml(env: ManagerBasedRlEnv, cfg: ExportConfig) -> dict:
+def sim_standing_foot_load(env_cfg) -> list[float]:
+  """Per sim foot (contact sensor order), mdp.foot_force_sensor while standing still on flat
+  ground in the default pose (zero action), without noise: what the student saw for a
+  standing robot. The feet are not equal (the hind legs carry more)."""
+  from copy import deepcopy
+
+  from mjlab.tasks.velocity import mdp
+  from mjlab.tasks.velocity.terrain_profiles import set_terrain_profile
+
+  cfg = nominal_eval_cfg(deepcopy(env_cfg))
+  set_terrain_profile(cfg, "flat")
+  cfg.scene.num_envs = 1
+  cfg.episode_length_s = 1e6
+  for name in [n for n in cfg.commands]:  # stand: zero velocity command
+    term = cfg.commands[name]
+    if hasattr(term, "rel_standing_envs"):
+      term.rel_standing_envs = 1.0
+  env = ManagerBasedRlEnv(cfg=cfg, device="cpu")
+  try:
+    env.reset()
+    sensor_name = env.observation_manager.get_term_cfg("student_sensors", "foot_force").params["sensor_name"]
+    loads = []
+    for step in range(150):  # 3 s: settle 1.5 s, average the rest
+      env.step(torch.zeros(1, env.action_manager.total_action_dim))
+      if step >= 75:
+        loads.append(mdp.foot_force_sensor(env, sensor_name)[0])
+    return torch.stack(loads).mean(0).tolist()
+  finally:
+    env.close()
+
+
+def _foot_force_params(
+  env: ManagerBasedRlEnv, term, cfg: ExportConfig, sim_standing: list[float] | None
+) -> dict:
+  """foot_ids_map (SDK index of each sim foot, in the contact sensor's order) and the
+  per-foot calibration that turns raw counts into the training unit: each foot standing
+  on the robot reads what it read standing in the sim."""
+  if cfg.foot_force_offset is None or cfg.foot_force_standing is None:
+    raise ValueError(
+      "This student reads the foot force sensors: pass --foot-force-offset and "
+      "--foot-force-standing from the robot's calibration (doc/experiments.md)."
+    )
+  if sim_standing is None:
+    raise ValueError("The sim's standing foot loads are needed (sim_standing_foot_load).")
+  sensor = env.scene[term.params["sensor_name"]]
+  feet = [slot.primary_name for slot in sensor._slots if slot.field_name == "force"]
+  ids = []
+  for geom in feet:
+    leg = next(leg for leg in GO2_SDK_FOOT_ORDER if geom.startswith(leg + "_"))
+    ids.append(GO2_SDK_FOOT_ORDER.index(leg))
+  scale = [0.0] * 4
+  for sim_foot, sdk in enumerate(ids):
+    span = cfg.foot_force_standing[sdk] - cfg.foot_force_offset[sdk]
+    if span <= 0:
+      raise ValueError(f"Foot {GO2_SDK_FOOT_ORDER[sdk]}: standing reading not above the offset")
+    scale[sdk] = sim_standing[sim_foot] / span
+  return {
+    "foot_ids_map": ids,
+    "offset": [float(x) for x in cfg.foot_force_offset],
+    "scale": scale,
+    "sim_standing": [float(x) for x in sim_standing],  # for reference, sim foot order
+  }
+
+
+def build_deploy_yaml(
+  env: ManagerBasedRlEnv, cfg: ExportConfig, policy_groups: tuple[str, ...] = ("policy",),
+  sim_standing: list[float] | None = None,
+) -> dict:
   robot = env.scene["robot"]
   sim_joints = list(robot.joint_names)
   assert sorted(sim_joints) == sorted(GO2_SDK_JOINT_ORDER), sim_joints
@@ -109,27 +188,36 @@ def build_deploy_yaml(env: ManagerBasedRlEnv, cfg: ExportConfig) -> dict:
   if not gait.frequency_range[0] <= cfg.gait_frequency <= gait.frequency_range[1]:
     raise ValueError("Deployment gait frequency must lie inside the training range")
 
-  # Observation vector = policy group terms, then the student height map.
+  # Observation vector = the student's proprio groups' terms in order (its obs_groups
+  # "policy": policy, then student_sensors), then the height map: the order the ONNX
+  # model's input is split in (StudentOnnxWrapper).
   obs_manager = env.observation_manager
   observations: dict = {}
-  for name, dims in zip(
-    obs_manager.active_terms["policy"], obs_manager.group_obs_term_dim["policy"], strict=True
-  ):
-    if name not in CPP_OBS_NAMES:
-      raise KeyError(f"Policy observation '{name}' has no C++ implementation.")
-    dim = int(np.prod(dims))
-    params: dict = {}
-    if name == "command":
-      params = {"command_name": "base_velocity"}
-    elif name == "gait_phase":
-      params = {
-        "frequency": cfg.gait_frequency,
-        "offsets": [float(x) for x in gait.leg_offsets],
-      }
-    term = obs_manager.get_term_cfg("policy", name)
-    if term.history_length or term.scale is not None or term.clip is not None:
-      raise ValueError(f"Export cannot silently discard history/scale/clip for {name}")
-    observations[CPP_OBS_NAMES[name]] = _term_cfg(params, dim)
+  for group in policy_groups:
+    for name, dims in zip(
+      obs_manager.active_terms[group], obs_manager.group_obs_term_dim[group], strict=True
+    ):
+      if name not in CPP_OBS_NAMES:
+        raise KeyError(f"Student observation '{group}/{name}' has no C++ implementation.")
+      if CPP_OBS_NAMES[name] in observations:
+        raise KeyError(f"Two student observations map to C++ '{CPP_OBS_NAMES[name]}'.")
+      dim = int(np.prod(dims))
+      params: dict = {}
+      if name == "command":
+        params = {"command_name": "base_velocity"}
+      elif name == "gait_phase":
+        params = {
+          "frequency": cfg.gait_frequency,
+          "offsets": [float(x) for x in gait.leg_offsets],
+        }
+      elif name == "foot_force":
+        params = _foot_force_params(env, obs_manager.get_term_cfg(group, name), cfg, sim_standing)
+      term = obs_manager.get_term_cfg(group, name)
+      if term.history_length or term.scale is not None:
+        raise ValueError(f"Export cannot silently discard history/scale for {name}")
+      observations[CPP_OBS_NAMES[name]] = _term_cfg(params, dim)
+      if term.clip is not None:
+        observations[CPP_OBS_NAMES[name]]["clip"] = [float(term.clip[0]), float(term.clip[1])]
 
   height_dims = obs_manager.group_obs_term_dim["height_noisy"][0]
   num_rays = int(np.prod(height_dims))
@@ -190,7 +278,10 @@ def build_deploy_yaml(env: ManagerBasedRlEnv, cfg: ExportConfig) -> dict:
   }
 
 
-def verify(env: RslRlVecEnvWrapper, policy, onnx_path: Path, cfg: ExportConfig) -> float:
+def verify(
+  env: RslRlVecEnvWrapper, policy, onnx_path: Path, cfg: ExportConfig,
+  policy_groups: tuple[str, ...] = ("policy",),
+) -> float:
   import onnxruntime as ort
 
   session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
@@ -206,7 +297,9 @@ def verify(env: RslRlVecEnvWrapper, policy, onnx_path: Path, cfg: ExportConfig) 
     for _ in range(cfg.verify_steps):
       torch_actions = policy.act_inference(obs)
       expected = torch.tanh(torch_actions) if squash else torch_actions  # what the env applies
-      flat_obs = torch.cat([obs["policy"], obs["height_noisy"]], dim=-1).cpu().numpy()
+      flat_obs = torch.cat(
+        [obs[g] for g in policy_groups] + [obs["height_noisy"]], dim=-1
+      ).cpu().numpy()
       onnx_actions, h = session.run(None, {"obs": flat_obs.astype(np.float32), "h_in": h})
       error = float(np.abs(onnx_actions - expected.cpu().numpy()).max())
       if not np.isfinite(error):
@@ -226,6 +319,10 @@ def main(cfg: ExportConfig) -> None:
   out_dir = Path(cfg.output_dir)
   checkpoint = torch.load(cfg.checkpoint_file, weights_only=False, map_location="cpu")
   env_cfg, agent_cfg = checkpoint_configs(checkpoint, cfg.task, allow_legacy=cfg.allow_legacy_config)
+  policy_groups = tuple(agent_cfg["obs_groups"]["policy"])
+  sim_standing = None
+  if "student_sensors" in policy_groups:
+    sim_standing = sim_standing_foot_load(env_cfg)
   env_cfg = nominal_eval_cfg(env_cfg)
   if agent_cfg.get("clip_actions") is not None:
     raise ValueError("Export of wrapper-level raw action clipping is not supported")
@@ -243,7 +340,7 @@ def main(cfg: ExportConfig) -> None:
     raise ValueError("That checkpoint is a teacher. Export a student checkpoint.")
   policy = runner.alg.policy
 
-  deploy_cfg = build_deploy_yaml(env.unwrapped, cfg)
+  deploy_cfg = build_deploy_yaml(env.unwrapped, cfg, policy_groups, sim_standing)
   obs_dim = sum(len(term["scale"]) for term in deploy_cfg["observations"].values())
   assert obs_dim == policy.student_obs_dim, (obs_dim, policy.student_obs_dim)
 
@@ -252,7 +349,7 @@ def main(cfg: ExportConfig) -> None:
     with tempfile.TemporaryDirectory(prefix="pgtt-export-", dir=out_dir.parent) as temp:
       staged = Path(temp)
       policy.export_onnx(str(staged), "policy.onnx", squash=env.unwrapped.cfg.squash_actions)
-      err = verify(env, policy, staged / "policy.onnx", cfg)
+      err = verify(env, policy, staged / "policy.onnx", cfg, policy_groups)
       if err > cfg.tolerance:
         raise RuntimeError(f"ONNX export mismatch {err:.2e} > {cfg.tolerance}")
       # Failed verification never replaces the controller's current model/config.

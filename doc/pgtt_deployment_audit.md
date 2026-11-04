@@ -130,19 +130,19 @@ terrain gradient, full randomization, privileged dynamics). It is not the old
 - the rung 4/5 collapse was a bug in the effort-limit randomization, now fixed;
 - rung 7 is running with the terrain fixes, and rungs 8 and 9 follow it.
 
-Full steps: [COMMANDS.md](../COMMANDS.md) 4d. **Before distilling:** the Student task builds
-its own teacher inputs, with 53 privileged values and no `dynamics`. So a rung 8+ teacher does
-not load into it until the Student task uses the rung's teacher groups. Then check that the
-student can reconstruct each part of `dynamics`
+Full steps: [COMMANDS.md](../COMMANDS.md) 4d. **Distill with `Rung9-Student`:** the rung's
+environment plus the student's sensors, so the rung 9 teacher loads unchanged (tested). Then
+check that the student can reconstruct each part of `dynamics`
 ([research_terrain_and_privileged_state.md](research_terrain_and_privileged_state.md)).
+The student reads 172 values: the 54 `policy` values, the accelerometer, the 12 motor torque
+estimates and the 4 foot force sensors (`student_sensors`), and the LiDAR map. The export
+needs the foot force calibration (`--foot-force-offset`, `--foot-force-standing`), and the C++
+reads `imu_state.accelerometer`, `motor_state.tau_est` and `foot_force` (not compiled here).
 
 ```bash
 python scripts/train.py Mjlab-Velocity-PGTT-Rung9-Unitree-Go2 --env.scene.num-envs=4096 --agent.max-iterations=10000 --agent.run-name teacher_full
-python scripts/train.py Mjlab-Velocity-PGTT-Student-Unitree-Go2 --terrain mixed --env.scene.num-envs 4096 --teacher-checkpoint logs/rsl_rl/go2_pgtt_repro/<date>_<time>_teacher_full/model_9999.pt
+python scripts/train.py Mjlab-Velocity-PGTT-Rung9-Student-Unitree-Go2 --env.scene.num-envs 4096 --teacher-checkpoint logs/rsl_rl/go2_pgtt_repro/<date>_<time>_teacher_full/model_9999.pt
 ```
-The student task is built on the old teacher task's environment. Before the real student run,
-check with a short smoke run that it loads the rung-9 teacher (same network and observation
-sizes; see above).
 
 Evaluate the resulting student separately on each surface. Repeat difficulty values
 0, 0.5 and 1, and inspect the motion as well as the JSON metrics. The evaluator reports

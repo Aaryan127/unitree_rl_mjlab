@@ -4,14 +4,16 @@
 #include <cmath>
 #include <iomanip>
 #include <limits>
+#include <string>
 
 int main(int argc, char** argv) {
-    assert(argc == 2);
+    assert(argc == 3);  // model, student input size (153 before student_sensors, 172 with)
     isaaclab::OrtRunner runner(argv[1]);
+    const size_t n = std::stoul(argv[2]);
     std::cout << std::setprecision(9);
     for (int step = 0; step < 10; ++step) {
         if (step == 5) runner.reset();
-        std::vector<float> obs(153);
+        std::vector<float> obs(n);
         for (size_t j = 0; j < obs.size(); ++j) obs[j] = std::sin((step + j) * 0.1f);
         auto actions = runner.act({{"obs", obs}});
         assert(actions.size() == 12);
@@ -20,11 +22,11 @@ int main(int argc, char** argv) {
         std::cout << "\n";
     }
     bool rejected = false;
-    try { runner.act({{"obs", std::vector<float>(152)}}); }
+    try { runner.act({{"obs", std::vector<float>(n - 1)}}); }
     catch (const std::runtime_error&) { rejected = true; }
     assert(rejected);
     rejected = false;
-    try { runner.act({{"obs", std::vector<float>(153, std::numeric_limits<float>::quiet_NaN())}}); }
+    try { runner.act({{"obs", std::vector<float>(n, std::numeric_limits<float>::quiet_NaN())}}); }
     catch (const std::runtime_error&) { rejected = true; }
     assert(rejected);
     auto& map = isaaclab::HeightMap::instance();

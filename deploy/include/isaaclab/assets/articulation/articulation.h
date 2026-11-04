@@ -33,6 +33,15 @@ struct ArticulationData
     // Root angular velocity in base world frame.
     Eigen::Vector3f root_ang_vel_b;
 
+    // IMU accelerometer in the base frame [m/s^2], gravity included.
+    Eigen::Vector3f root_lin_acc_b = Eigen::Vector3f::Zero();
+
+    // Motor torque estimates of all joints [Nm] (motor_state.tau_est), sim joint order.
+    Eigen::VectorXf joint_tau_est;
+
+    // Raw foot force sensor readings, SDK foot order (FR, FL, RR, RL).
+    std::array<float, 4> foot_force_raw{};
+
     // Projection of the gravity direction on base frame.
     Eigen::Vector3f projected_gravity_b;
 
